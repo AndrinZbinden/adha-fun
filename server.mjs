@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { loadKeeper } from "./executor.mjs";
+import { loadKeeper, findProgramAddress, b58decode, b58encode } from "./executor.mjs";
 import { runCycle, ACTION_KINDS, FEE_RESERVE } from "./keeper.mjs";
 import { claimForMint } from "./claim.mjs";
 
@@ -133,6 +133,7 @@ const LEG_KINDS = new Set(["burn", "holders", "jackpot", "wallet", "creator", "t
 const BUCKETS = {
   "/api/rpc":         { cap: 240, refill: 4.0 },   // whole launch flow ≈ 40
   "/api/market":      { cap: 60,  refill: 0.5 },   // 60s cache absorbs the rest
+  "/api/launches/health": { cap: 60, refill: 0.5 },// one RPC read per mint, cached 60s
   "/api/ipfs":        { cap: 12,  refill: 0.05 },  // one per launch, ~1/20s back
   "/api/trade-local": { cap: 30,  refill: 0.25 },
   "/api/execute":     { cap: 20,  refill: 0.1 },
@@ -204,6 +205,75 @@ function validateLegs(legs) {
   // pump.fun fee-sharing requires shares to sum to exactly 10000 bps.
   if (total !== 10000) return `legs must sum to 10000 bps (got ${total})`;
   return null;
+}
+
+/* ---- on-chain split health ------------------------------------------------
+   pump.fun keeps the fee split in a "sharing-config" account derived from the
+   mint. If that account is missing, 100% of creator fees go to the creator and
+   the hooks can never fire, however correct the registered legs look. So read
+   the account rather than trusting anything in our own database. */
+const FEES_PROGRAM = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ";
+const healthCache = new Map();                  // mint -> { at, value }
+
+function decodeSharingConfig(b64) {
+  const raw = Buffer.from(b64, "base64");
+  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  // 8 discriminator, bump u8, version u8, status u8, mint 32, admin 32,
+  // admin_revoked bool, then a vec of (pubkey 32, bps u16).
+  const REVOKED_AT = 8 + 1 + 1 + 1 + 32 + 32;
+  let o = REVOKED_AT + 1;
+  const n = dv.getUint32(o, true); o += 4;
+  const holders = [];
+  for (let i = 0; i < n; i++) {
+    holders.push({ address: b58encode(raw.subarray(o, o + 32)), bps: dv.getUint16(o + 32, true) });
+    o += 34;
+  }
+  return { holders, revoked: raw[REVOKED_AT] === 1 };
+}
+
+async function splitHealth(mint) {
+  const hit = healthCache.get(mint);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+
+  const row = db.prepare("SELECT * FROM launches WHERE mint=?").get(mint);
+  if (!row) return { status: "unknown", error: "not registered" };
+  const legs = JSON.parse(row.legs_json);
+
+  // What the config SHOULD say: action legs pay the executor, passive legs
+  // (creator/wallet) are paid straight to their own address by pump.fun.
+  const want = new Map();
+  for (const leg of legs) {
+    const addr = ACTION_KINDS.has(leg.kind)
+      ? keeper.address
+      : (leg.address || leg.target || row.creator);
+    want.set(addr, (want.get(addr) || 0) + leg.bps);
+  }
+
+  const { address: pda } = findProgramAddress(
+    [Buffer.from("sharing-config"), Buffer.from(b58decode(mint))], FEES_PROGRAM);
+
+  const r = await fetch(RPC_URL, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo",
+      params: [pda, { encoding: "base64" }] }),
+  });
+  const info = (await r.json()).result;
+
+  let value;
+  if (!info || !info.value) {
+    value = { status: "missing", executorBps: want.get(keeper.address) || 0 };
+  } else {
+    const { holders, revoked } = decodeSharingConfig(info.value.data[0]);
+    const got = new Map(holders.map((h) => [h.address, h.bps]));
+    const diffs = [];
+    for (const [a, b] of want) if ((got.get(a) || 0) !== b) diffs.push(a);
+    for (const a of got.keys()) if (!want.has(a)) diffs.push(a);
+    value = diffs.length
+      ? { status: "wrong", revoked, holders }
+      : { status: "ok", revoked, executorBps: want.get(keeper.address) || 0 };
+  }
+  healthCache.set(mint, { at: Date.now(), value });
+  return value;
 }
 
 async function handleApi(req, res, url) {
@@ -384,6 +454,23 @@ async function handleApi(req, res, url) {
       try { out[m] = await marketFor(m); } catch { out[m] = {}; }
     }));
     return json(res, 200, { market: out });
+  }
+
+  // --- is the fee split actually live on chain? ----------------------------
+  // The policy_sig column only records that the browser reported signature 2
+  // back to us. It is null for coins whose split is perfectly fine, so the
+  // page cannot use it to decide anything. Derive the sharing-config account
+  // instead and read the real shareholder table: that is the only thing that
+  // determines where pump.fun sends the fees.
+  if (p === "/api/launches/health" && req.method === "GET") {
+    const mints = String(url.searchParams.get("mints") || "").split(",")
+      .filter((m) => B58.test(m)).slice(0, 24);
+    const out = {};
+    await Promise.all(mints.map(async (m) => {
+      try { out[m] = await splitHealth(m); }
+      catch (e) { out[m] = { status: "unknown", error: String(e.message || e).slice(0, 80) }; }
+    }));
+    return json(res, 200, { health: out });
   }
 
   // Record a split that was attached after the launch itself. Same proof rule

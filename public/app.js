@@ -332,7 +332,7 @@ async function boot() {
       const m = await import(new URL("launch-flow.js?v=11e99e54", document.baseURI).href);
       await m.initLaunch();
     } else if (page === "launches") {
-      const m = await import(new URL("launches-view.js?v=d4c98a93", document.baseURI).href);
+      const m = await import(new URL("launches-view.js?v=914664b7", document.baseURI).href);
       await m.initLaunches();
     }
   } catch (e) {

@@ -68,11 +68,16 @@ export async function initLaunches() {
   // index, then fill in logo and numbers when the upstream answers.
   async function enrich(mints) {
     if (!mints.length) return;
-    let market = {};
+    let market = {}, health = {};
     try {
       const r = await fetch(api("api/market?mints=" + mints.join(",")));
       market = (await r.json()).market || {};
     } catch { }
+    try {
+      const r = await fetch(api("api/launches/health?mints=" + mints.join(",")));
+      health = (await r.json()).health || {};
+    } catch { }
+    for (const mint of mints) renderSplit(list, mint, health[mint]);
     for (const mint of mints) {
       const m = market[mint] || {};
       const logo = list.querySelector('[data-logo="' + mint + '"]');
@@ -99,6 +104,40 @@ export async function initLaunches() {
   });
 
   wallet.onChange(render);
+}
+
+/* Say plainly whether pump.fun is actually routing fees to the executor.
+   "missing" is the case that matters: the coin is live, the legs look right on
+   this page, and yet every lamport goes to the creator wallet because the
+   second signature never landed. */
+function renderSplit(list, mint, h) {
+  const el = list.querySelector('[data-split="' + mint + '"]');
+  if (!el) return;
+  const sig = el.getAttribute("data-sig");
+  const hook = el.getAttribute("data-hook") || "";
+  const link = (t) => '<a class="hover:text-neutral1 transition-colors" target="_blank" ' +
+    'rel="noreferrer" href="https://solscan.io/tx/' + esc(sig) + '">' + t + " \u2197</a>";
+  const repair = (t) => '<button data-attach="' + esc(mint) + '" data-hook="' + esc(hook) + '" ' +
+    'class="text-brand hover:text-brand-hover transition-colors">' + t + "</button>";
+
+  if (!h || h.status === "unknown") {
+    el.outerHTML = sig ? link("split tx") : '<span class="text-neutral3">split status unavailable</span>';
+    return;
+  }
+  if (h.status === "ok") {
+    const pct = Math.round((h.executorBps || 0) / 100);
+    el.outerHTML = '<span class="text-neutral2" title="' +
+      (h.revoked ? "revoked, so the split can no longer be changed" : "the split can still be changed") +
+      '">\u2713 split live on chain \u00b7 ' + pct + "% routed" +
+      (h.revoked ? " \u00b7 locked" : "") + "</span>" + (sig ? " " + link("tx") : "");
+    return;
+  }
+  if (h.status === "wrong") {
+    el.outerHTML = '<span class="text-brand">split does not match this adha</span> ' + repair("repair it");
+    return;
+  }
+  el.outerHTML = '<span class="text-brand" title="pump.fun is sending 100% of creator fees to your wallet, ' +
+    'so the hooks cannot run">\u26a0 no split on chain \u00b7 fees are not routed</span> ' + repair("attach the split");
 }
 
 function bar(legs) {
@@ -131,14 +170,12 @@ function card(x) {
       bar(legs) +
       '<div class="mt-3 flex items-center justify-between gap-3 text-[12.5px] text-neutral2">' +
         "<span>" + esc(split) + "</span>" +
-        (x.policySig
-          ? '<a class="hover:text-neutral1 transition-colors" target="_blank" rel="noreferrer" href="https://solscan.io/tx/' +
-            esc(x.policySig) + '">split tx \u2197</a>'
-          // A coin whose second signature never landed is live but unsplit.
-          // It can be repaired at any time, so offer that instead of a dead
-          // label the creator can do nothing with.
-          : '<button data-attach="' + esc(x.mint) + '" data-hook="' + esc(x.hookId || "") + '" ' +
-            'class="text-brand hover:text-brand-hover transition-colors">attach the split</button>') +
+        // Filled in by the health fetch. policy_sig is null even on coins
+        // whose split is perfectly fine, so deciding from it offered "attach
+        // the split" on healthy coins and hid the problem on broken ones.
+        // The on-chain account is the only honest answer.
+        '<span data-split="' + esc(x.mint) + '" data-hook="' + esc(x.hookId || "") + '" ' +
+          'data-sig="' + esc(x.policySig || "") + '" class="text-neutral3">checking the split\u2026</span>' +
       "</div>" +
     "</div>";
 }
