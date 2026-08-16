@@ -321,18 +321,18 @@ async function boot() {
     if (page === "custom") {
       const m = await import(new URL("hooks-custom.js?v=56a8b25c", document.baseURI).href);
       m.initCustom();
-      import(new URL("launch-flow.js?v=758eaeb3", document.baseURI).href)
+      import(new URL("launch-flow.js?v=12d83b9f", document.baseURI).href)
         .then((lf) => lf.prewarm()).catch(() => {});
     } else if (page === "hooks") {
       const m = await import(new URL("hooks-list.js?v=9c5ebe6e", document.baseURI).href);
       await m.initHooksList();
-      import(new URL("launch-flow.js?v=758eaeb3", document.baseURI).href)
+      import(new URL("launch-flow.js?v=12d83b9f", document.baseURI).href)
         .then((lf) => lf.prewarm()).catch(() => {});
     } else if (page === "launch") {
-      const m = await import(new URL("launch-flow.js?v=758eaeb3", document.baseURI).href);
+      const m = await import(new URL("launch-flow.js?v=12d83b9f", document.baseURI).href);
       await m.initLaunch();
     } else if (page === "launches") {
-      const m = await import(new URL("launches-view.js?v=a3103823", document.baseURI).href);
+      const m = await import(new URL("launches-view.js?v=3d10edea", document.baseURI).href);
       await m.initLaunches();
     }
   } catch (e) {
