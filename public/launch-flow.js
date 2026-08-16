@@ -85,6 +85,19 @@ const LEG_PHRASE = {
 
 const fmtBps = (b) => (b / 100).toFixed(b % 100 ? 1 : 0) + "%";
 
+/* The hook is the whole point of launching here, but it lived only on our own
+   launches page. pump.fun, Dexscreener, the terminals and every aggregator
+   read the IPFS description, so state the split there too — that is the only
+   place a buyer who has never seen adha.fun will look. */
+export function hookLine(hook) {
+  if (!hook || !Array.isArray(hook.legs) || !hook.legs.length) return "";
+  const split = hook.legs
+    .map((l) => fmtBps(l.bps) + " " + String(LABELS[l.kind] || l.kind).toLowerCase())
+    .join(", ");
+  const name = hook.name || hook.id || "Custom";
+  return "Creator-fee hook \u2014 " + name + ": " + split + ". Policy published via adha.fun.";
+}
+
 function summaryPanel() {
   const head = $$("div").find((d) => d.textContent.trim() === "Before you sign");
   return head ? head.parentElement : null;
@@ -861,7 +874,14 @@ async function runLaunch() {
   fd.append("file", imageFile);
   fd.append("name", name);
   fd.append("symbol", symbol);
-  fd.append("description", F.desc ? F.desc.value.trim() : "");
+  // The creator's own words first, then the hook, so the split travels with
+  // the coin everywhere its metadata is read. Skip if they already wrote it.
+  const own = F.desc ? F.desc.value.trim() : "";
+  const line = hookLine(selected);
+  const full = !line || own.includes("Creator-fee hook")
+    ? own
+    : (own ? own.replace(/\s*$/, "") + "\n\n" : "") + line;
+  fd.append("description", full);
   fd.append("twitter", F.opt[0] ? F.opt[0].value.trim() : "");
   fd.append("telegram", F.opt[1] ? F.opt[1].value.trim() : "");
   fd.append("website", F.opt[2] ? F.opt[2].value.trim() : "");
