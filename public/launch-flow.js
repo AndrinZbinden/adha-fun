@@ -908,7 +908,10 @@ async function runLaunch() {
       ensurePool();
       skipping = () => { if (poolAbort) poolAbort.abort(); };
       grindProgress = (n) => {
-        step("Skip the search");
+        // Say on the button itself what skipping costs. "Skip the search"
+        // read like skipping a wait; the coin actually comes out without the
+        // suffix, which is the one thing people care about here.
+        step("Skip \u2014 no " + MINT_SUFFIX + " suffix");
         setGate("Looking for an address ending in " + MINT_SUFFIX + ": " +
                 (n / 1e6).toFixed(2) + "M tried, " +
                 Math.round((Date.now() - t0) / 1000) + "s. " +
