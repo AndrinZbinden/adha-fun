@@ -667,6 +667,14 @@ async function keeperTick() {
         if (used > 0n) debit.run(Number(used), Date.now(), row.mint);
         if (used > 0n) console.log(`[keeper] ${row.mint} spent ${used} of ${budget}`);
       } catch (e) {
+        // A coin whose split signature never landed has no sharing config, so
+        // pump pays 100% to the creator and there is nothing for us to claim.
+        // That is a known state with a fix in the UI, not a fault: logging it
+        // as a failure every 15 minutes buried the real errors under noise.
+        if (/sharing config not found/i.test(e.message || "")) {
+          console.log("[keeper] skip", row.mint, "no split attached, fees go to the creator");
+          continue;
+        }
         console.error("[keeper] cycle failed", row.mint, e.message);
       }
     }
