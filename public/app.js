@@ -225,13 +225,19 @@ function toggleWalletMenu(btn) {
     "background:#fff;border:1px solid rgba(18,15,25,.08);" +
     "box-shadow:0 12px 34px rgba(18,15,25,.14);font-size:13px;" +
     "top:" + (r.bottom + 8) + "px;right:" + Math.max(8, innerWidth - r.right) + "px;";
+  // wallet.name and wallet.publicKey come from the injected provider, i.e. from
+  // outside this page. Everything else in the codebase escapes before it hits
+  // innerHTML; this one spot did not. A malicious or spoofed extension could
+  // name itself with markup and get script into the page.
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   m.innerHTML =
     '<div style="padding:9px 10px 10px">' +
       '<div style="font-size:11.5px;color:#8d8ba3;letter-spacing:.02em">' +
-        (wallet.name || "Wallet") + "</div>" +
+        esc(wallet.name || "Wallet") + "</div>" +
       '<div style="margin-top:3px;font-size:12px;color:#120f19;word-break:break-all;' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,monospace">' +
-        wallet.publicKey + "</div>" +
+        esc(wallet.publicKey) + "</div>" +
     "</div>" +
     '<button data-act="copy" style="display:block;width:100%;text-align:left;padding:9px 10px;' +
       'border-radius:9px;background:none;border:0;cursor:pointer;color:#120f19">Copy address</button>' +

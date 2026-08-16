@@ -216,11 +216,17 @@ async function handleApi(req, res, url) {
     // This proxy spends the Helius quota, so it is not a free public endpoint:
     // requests must come from our own pages, and may only call the handful of
     // methods the launch flow actually needs.
-    const origin = req.headers.origin || req.headers.referer || "";
+    // Two holes closed here. (1) The check was skipped entirely when Origin
+    // was absent, so curl with no headers got unlimited free RPC. A browser on
+    // our own pages always sends Origin or Referer, so absence means "not a
+    // browser" and is now refused. (2) `origin.includes(host)` matched
+    // https://adha.fun.attacker.io because that string contains "adha.fun".
+    // Compare the parsed hostname for equality instead of substring.
+    const raw = req.headers.origin || req.headers.referer || "";
     const host = req.headers.host || "";
-    if (origin && host && !origin.includes(host)) {
-      return json(res, 403, { error: "cross-origin RPC is not allowed" });
-    }
+    let ok = false;
+    try { ok = !!raw && !!host && new URL(raw).host === host; } catch { ok = false; }
+    if (!ok) return json(res, 403, { error: "cross-origin RPC is not allowed" });
     const body = await readBody(req, 1024 * 1024);
     let call; try { call = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
     const calls = Array.isArray(call) ? call : [call];
@@ -348,8 +354,14 @@ async function handleApi(req, res, url) {
   }
 
   if (p === "/api/health") {
+    // NEVER return RPC_URL here. It carries the Helius api-key in its query
+    // string, and this endpoint is unauthenticated, so echoing it published the
+    // key to anyone who asked. /api/config already documents this rule; health
+    // quietly broke it. Report the upstream host only.
     const n = db.prepare("SELECT COUNT(*) c FROM launches").get().c;
-    return json(res, 200, { ok: true, launches: n, rpc: RPC_URL, ts: Date.now() });
+    let rpcHost = "unknown";
+    try { rpcHost = new URL(RPC_URL).host; } catch {}
+    return json(res, 200, { ok: true, launches: n, rpcHost, ts: Date.now() });
   }
 
   return json(res, 404, { error: "no such endpoint" });
