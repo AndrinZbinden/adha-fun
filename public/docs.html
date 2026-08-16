@@ -58,7 +58,7 @@
   <p><strong>Adha never holds your money.</strong> There is no deposit, no vault, no account balance. Every transaction is built in your browser and signed in your wallet. The site cannot move funds it was not explicitly asked to move, because it has no key that can.</p>
   <div class="hl-note">
     <p class="hl-note-t">The one thing to understand</p>
-    <p>Pump's fee sharing can only pay <em>wallet addresses</em>. It cannot call a program to burn tokens or run a jackpot. So actions like burn, buyback and jackpot route their share to one executor wallet, and a small service claims each coin's fees and performs the action from there. That wallet is named below, and everything it does is a public transaction. If you only trust what is enforced on chain, use the direct legs: <span class="hl-k">creator</span> and <span class="hl-k">wallet</span>.</p>
+    <p>pump.fun's fee sharing can only pay <em>wallet addresses</em>. It cannot call a program to burn tokens or run a jackpot. So actions like burn, buyback and jackpot route their share to one executor wallet, and a small service claims each coin's fees and performs the action from there. That wallet is named below, and everything it does is a public transaction. If you only trust what is enforced on chain, use the direct legs: <span class="hl-k">creator</span> and <span class="hl-k">wallet</span>.</p>
   </div>
 </section>
 
@@ -86,6 +86,7 @@
   </ol>
   <h3 class="hl-h3">The address ending in adha</h3>
   <p>Mint addresses that end in <span class="hl-k">adha</span> are found by brute force: your browser generates keypairs until one lands on that suffix, which takes around 11 million tries. That work happens on your machine, in a background worker, and the site banks up to ten spare addresses so later launches are instant. You can pause the search from the launch page, and it stops on its own once the bank is full.</p>
+  <p>The adha you picked is also written into the coin's description when it is minted, so the split shows up on pump.fun and on every terminal that reads the coin's metadata, not only here.</p>
   <p>Those keys are generated in your browser and never sent anywhere. A mint keypair signs the creation transaction and holds no authority over the coin afterwards.</p>
 </section>
 
@@ -94,7 +95,7 @@
   <p>pump.fun pays creator fees to whoever is listed in the coin's sharing config. Adha writes that list for you. It reads the existing config off chain first and passes the exact accounts the program already holds, rather than guessing.</p>
   <div class="hl-warn">
     <p class="hl-note-t">The split is written once and cannot be changed</p>
-    <p>When the config is created, pump marks it non-editable. Nobody can rewrite it afterwards: not you, not us, not pump. Read your split carefully before you sign, because that policy is the coin's policy forever.</p>
+    <p>When the config is created, pump.fun marks it non-editable. Nobody can rewrite it afterwards: not you, not us, not pump.fun. Read your split carefully before you sign, because that policy is the coin's policy forever.</p>
   </div>
   <h3 class="hl-h3">The legs you can use</h3>
   <div class="hl-table">
@@ -103,10 +104,10 @@
     <div class="hl-row"><span class="hl-k">wallet</span><span>Fees go to an address you name</span><span>on chain</span></div>
     <div class="hl-row"><span class="hl-k">burn</span><span>Buy the coin, then burn it</span><span>the keeper</span></div>
     <div class="hl-row"><span class="hl-k">buyback</span><span>Buy the coin and hold it</span><span>the keeper</span></div>
-    <div class="hl-row"><span class="hl-k">holders</span><span>Distribute to holders</span><span>the keeper</span></div>
-    <div class="hl-row"><span class="hl-k">top-holders</span><span>Distribute to the largest holders</span><span>the keeper</span></div>
-    <div class="hl-row"><span class="hl-k">jackpot</span><span>Pay one holder at random</span><span>the keeper</span></div>
-    <div class="hl-row"><span class="hl-k">reserve</span><span>Hold for later use</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">holders</span><span>Split between holders, in proportion to how much each one holds</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">top-holders</span><span>The same, but only the largest holders (the top 50 unless you say otherwise)</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">jackpot</span><span>Pays one holder, drawn at random with odds equal to their share of supply</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">reserve</span><span>Buys and holds too, kept as a separate bag from buyback</span><span>the keeper</span></div>
   </div>
   <p>Shares are written in basis points and must total exactly 100%. Anything that is not a direct payout collapses onto the executor wallet in the on-chain config, which is why a four-leg adha can still show only one or two shareholders on Solscan. That is expected, not a bug.</p>
   <h3 class="hl-h3">Writing your own</h3>
@@ -119,10 +120,10 @@
   <p class="hl-addr">6xjNfNVyaigQYjLC7vNpUP4cbwHQNNdZhZpreemfvjjT</p>
   <p>It wakes every 15 minutes and, for each coin in turn, does two things:</p>
   <ol class="hl-steps">
-    <li><span class="hl-n">1</span><div><p class="hl-st">Claim that coin's fees</p><p>Trading fees do not arrive by themselves. Pump accrues them inside its fee program and someone has to send a distribute transaction to release them. That transaction pays every shareholder of that one coin's config at once, so direct legs are paid by pump in the same moment.</p></div></li>
-    <li><span class="hl-n">2</span><div><p class="hl-st">Spend exactly what that coin just paid</p><p>The keeper measures its own balance immediately before and after the claim. Nothing else can land in that window, so the difference <em>is</em> that coin's budget, measured rather than assumed. The action legs divide that figure and nothing else.</p></div></li>
+    <li><span class="hl-n">1</span><div><p class="hl-st">Claim that coin's fees</p><p>Trading fees do not arrive by themselves. pump.fun accrues them inside its fee program and someone has to send a distribute transaction to release them. That transaction pays every shareholder of that one coin's config at once, so direct legs are paid by pump in the same moment.</p></div></li>
+    <li><span class="hl-n">2</span><div><p class="hl-st">Spend exactly what that coin just paid</p><p>The keeper measures its own balance immediately before and after the claim, and works through coins one at a time, so the difference is that coin's budget, measured rather than assumed. An unrelated transfer landing in that same instant would be counted with it, which is why the wallet does nothing else. The action legs divide that figure and nothing else.</p></div></li>
   </ol>
-  <p>Every burn, buy and payout it makes is an ordinary public transaction on that address, so you can audit the whole history without asking anyone. It keeps a small reserve for network fees and skips amounts too small to be worth a transaction.</p>
+  <p>Every burn, buy and payout it makes is an ordinary public transaction on that address, so you can audit the whole history without asking anyone. It keeps a small reserve for network fees and skips any payment under 5,000 lamports, which costs more to send than it is worth.</p>
   <p>One wallet holds every coin's money, so a ledger records what each coin claimed and what its legs spent. A leg that is skipped as dust, or that fails, keeps its share on that coin's books for the next cycle instead of being absorbed by the pool.</p>
   <p>What the keeper <em>cannot</em> do: it cannot touch your wallet, mint tokens, or change a split. It only spends what has been routed to it.</p>
 </section>
@@ -134,7 +135,7 @@
     <li><strong>Action legs depend on the keeper.</strong> Burn, jackpot and holder payouts are performed by the wallet above, not enforced by a smart contract. If it stops running, those legs stop. Direct legs keep paying regardless, because pump pays them.</li>
     <li><strong>The split cannot be edited.</strong> Ever. Check it before signing.</li>
     <li><strong>One executor wallet serves every coin.</strong> The money is kept apart by claiming per coin and measuring what each claim delivered, and by a per-coin ledger. It is honest accounting rather than a shared pool, but it is bookkeeping in a single wallet, not separate accounts on chain.</li>
-    <li><strong>Small coins wait.</strong> Pump will not release fees below a minimum, so a low-volume coin simply accumulates until it clears that threshold. Nothing is lost; the claim just happens on a later cycle.</li>
+    <li><strong>Small coins wait.</strong> pump.fun will not release fees below a minimum, so a low-volume coin simply accumulates until it clears that threshold. Nothing is lost; the claim just happens on a later cycle.</li>
     <li><strong>The ledger is a few thousand lamports optimistic.</strong> It records what each leg was handed, not the network fees paid to send it, so a tiny residue builds up over time. Spending is also capped by the wallet's own reserve, so this cannot overdraw anything.</li>
     <li><strong>This site's list is a convenience, not the truth.</strong> The database records what was launched here. The chain is the source of truth, and it can disagree if a launch half-failed.</li>
     <li><strong>Your wallet can block a transaction.</strong> Wallets add their own safety checks and may reject a launch if the chain moves between signing and sending. Retrying is safe.</li>
@@ -149,7 +150,7 @@
     <div class="hl-row hl-head"><span>What</span><span>Where</span><span></span></div>
     <div class="hl-row"><span>All of the source code</span><span><a href="https://github.com/adhadotfun/adha-fun" target="_blank" rel="noreferrer">github.com/adhadotfun/adha-fun</a></span><span>read the launch flow</span></div>
     <div class="hl-row"><span>The keeper wallet</span><span><a href="https://solscan.io/account/6xjNfNVyaigQYjLC7vNpUP4cbwHQNNdZhZpreemfvjjT" target="_blank" rel="noreferrer">solscan.io</a></span><span>every action it has taken</span></div>
-    <div class="hl-row"><span>Pump's fee program</span><span class="hl-mono">pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ</span><span>holds the sharing configs</span></div>
+    <div class="hl-row"><span>pump.fun's fee program</span><span class="hl-mono">pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ</span><span>holds the sharing configs</span></div>
     <div class="hl-row"><span>Your own split</span><span><a href="launches">My launches</a></span><span>reads each split off chain and says whether it is live</span></div>
   </div>
   <p>The launcher's key claim is that it holds no keys, and that is checkable: the mint keypair is generated in browser code you can read, and the server has no endpoint that signs on your behalf. Every wallet prompt you see is a transaction you can inspect before approving.</p>
@@ -159,11 +160,11 @@
   <p class="hl-eyebrow"><span class="hl-eyerule"></span>FAQ</p><h2 class="hl-d-h2 semi tracking-tight">Questions people actually ask</h2>
   <div class="hl-qa">
     <p class="hl-q">Can you rug the split after I launch?</p>
-    <p>No. Once written, the config is marked non-editable by pump's program. There is no admin path back into it.</p>
+    <p>No. Once written, the config is marked non-editable by pump.fun's program. There is no admin path back into it.</p>
     <p class="hl-q">Do you take a cut?</p>
-    <p>No. Adha takes nothing. Your costs are pump's mint cost, the account rent, and network fees.</p>
+    <p>No. Adha takes nothing. Your costs are pump.fun's mint cost, the account rent, and network fees.</p>
     <p class="hl-q">Why does Solscan show one shareholder when my adha has four legs?</p>
-    <p>Because pump can only pay wallets. Non-direct legs are routed to the executor and carried out by the keeper. Direct legs appear individually.</p>
+    <p>Because pump.fun can only pay wallets. Non-direct legs are routed to the executor and carried out by the keeper. Direct legs appear individually.</p>
     <p class="hl-q">How do you know one coin's fees are not spent on another coin?</p>
     <p>Because the claim is per coin. The keeper releases one coin's fees, measures what landed in the executor from that exact transaction, and gives its legs that number. A coin that has earned nothing has a budget of zero, no matter how much of other coins' money is sitting in the wallet.</p>
     <p class="hl-q">If my coin claims 57.5 SOL and my adha is 100% burn, what happens?</p>
