@@ -224,15 +224,21 @@ async function payMany(ctx, recipients, note) {
 async function actBurn(ctx, lamports) {
   const { rpc, keeper, mint, dryRun } = ctx;
   const sol = Number(lamports) / LAMPORTS;
+  const ata = associatedTokenAddress(keeper.address, mint);
+  // Read the bag BEFORE buying: a buyback or reserve leg on the same coin is
+  // holding tokens on purpose, and burning the whole account would destroy
+  // them. Only what this buy adds may be burned.
+  const held = await rpc("getTokenAccountBalance", [ata])
+    .then((b) => BigInt(b.value.amount)).catch(() => 0n);
+
   const buy = await buildPumpBuy({ mint, buyer: keeper.address, solAmount: sol });
   const signed = signPrebuilt(buy, keeper);
   const bought = await sendAndConfirm(rpc, signed.toString("base64"), { dryRun });
   if (dryRun) return [{ note: "buy (simulated)", ...bought }];
 
-  // Burn whatever the buy actually delivered.
-  const ata = associatedTokenAddress(keeper.address, mint);
-  const bal = await rpc("getTokenAccountBalance", [ata]).catch(() => null);
-  const amount = bal ? BigInt(bal.value.amount) : 0n;
+  const after = await rpc("getTokenAccountBalance", [ata])
+    .then((b) => BigInt(b.value.amount)).catch(() => 0n);
+  const amount = after > held ? after - held : 0n;
   if (amount === 0n) return [{ note: "buy", ...bought }, { note: "burn", skipped: "no tokens" }];
   const { blockhash } = (await rpc("getLatestBlockhash", [{ commitment: "finalized" }])).value;
   const built = buildMessage({
@@ -289,14 +295,21 @@ async function actJackpot(ctx, lamports) {
  * Run one cycle for a mint: take the executor's spendable balance, divide it
  * across that mint's action legs by bps, and perform each one.
  */
-export async function runCycle({ rpcUrl, keeper, mint, legs, creator, dryRun = true, balanceOverride }) {
+export async function runCycle({ rpcUrl, keeper, mint, legs, creator, dryRun = true, balanceOverride, budget }) {
   const rpc = makeRpc(rpcUrl);
   const ctx = { rpc, keeper, mint, creator, dryRun };
 
   const balance = balanceOverride != null
     ? BigInt(balanceOverride)
     : BigInt((await rpc("getBalance", [keeper.address, { commitment: "confirmed" }])).value);
-  const spendable = balance > BigInt(FEE_RESERVE) ? balance - BigInt(FEE_RESERVE) : 0n;
+  // `budget` is what THIS mint's own claim paid the executor. One wallet holds
+  // every coin's money, so without it a coin with no fees would happily spend a
+  // coin that earned some. Still clamped by the wallet, which must keep enough
+  // behind to pay for the transactions the legs are about to send.
+  const headroom = balance > BigInt(FEE_RESERVE) ? balance - BigInt(FEE_RESERVE) : 0n;
+  const spendable = budget != null
+    ? (BigInt(budget) < headroom ? BigInt(budget) : headroom)
+    : headroom;
 
   const actionLegs = legs.filter((l) => ACTION_KINDS.has(l.kind));
   const actionBps = actionLegs.reduce((a, l) => a + l.bps, 0);

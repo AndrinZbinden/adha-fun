@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { loadKeeper } from "./executor.mjs";
 import { runCycle, ACTION_KINDS, FEE_RESERVE } from "./keeper.mjs";
+import { claimForMint } from "./claim.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
@@ -88,6 +89,12 @@ CREATE TABLE IF NOT EXISTS launches (
 );
 CREATE INDEX IF NOT EXISTS idx_launches_creator ON launches(creator);
 CREATE INDEX IF NOT EXISTS idx_launches_created ON launches(created_at DESC);
+CREATE TABLE IF NOT EXISTS ledger (
+  mint       TEXT PRIMARY KEY,
+  credited   INTEGER NOT NULL DEFAULT 0,
+  spent      INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS runs (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   mint       TEXT NOT NULL,
@@ -440,13 +447,14 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* ---- keeper scheduler -----------------------------------------------------
-   Nothing used to run the hooks: /api/execute only fired when something called
-   it, so a funded executor sat idle forever. This ticks it on a timer.
+   Every cycle, for each coin: claim that coin's accrued fees, then spend
+   exactly what the claim delivered on that coin's own legs.
 
-   Fees from every coin land in ONE executor wallet with no per-mint tag, so
-   there is no honest way to know which coin earned what. The spendable balance
-   is therefore split evenly across the coins that have action legs, rather
-   than letting the first coin in the list drain the wallet. */
+   This used to divide the executor's whole balance evenly across coins, which
+   meant a coin that earned nothing could spend a coin that earned plenty. The
+   claim is per mint, so the money is now attributable: the executor's balance
+   delta measured around one coin's distribute IS that coin's budget, and the
+   ledger carries any unspent remainder forward instead of pooling it. */
 const CYCLE_MIN = Number(process.env.KEEPER_INTERVAL_MIN || 15);
 let cycling = false;
 
@@ -462,32 +470,46 @@ async function keeperTick() {
     });
     if (!live.length) return;
 
-    const bal = await fetch(RPC_URL, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance",
-        params: [keeper.address, { commitment: "confirmed" }] }),
-    }).then((r) => r.json());
-    const balance = BigInt(bal?.result?.value ?? 0);
-    const spendable = balance > BigInt(FEE_RESERVE) ? balance - BigInt(FEE_RESERVE) : 0n;
-    if (spendable === 0n) return;
-
-    const share = spendable / BigInt(live.length);
     const ins = db.prepare("INSERT INTO runs (mint,leg_kind,bps,lamports,signature,status,created_at) VALUES (?,?,?,?,?,?,?)");
+    const readLedger = db.prepare("SELECT credited, spent FROM ledger WHERE mint = ?");
+    const credit = db.prepare(`INSERT INTO ledger (mint, credited, spent, updated_at)
+      VALUES (?, ?, 0, ?) ON CONFLICT(mint) DO UPDATE SET
+      credited = credited + excluded.credited, updated_at = excluded.updated_at`);
+    const debit = db.prepare("UPDATE ledger SET spent = spent + ?, updated_at = ? WHERE mint = ?");
 
     for (const row of live) {
       try {
+        // 1. Release this coin's fees. The executor receives only its own
+        //    share; direct legs are paid by pump in the same transaction.
+        const claim = await claimForMint({ rpcUrl: RPC_URL, keeper, mint: row.mint });
+        if (claim.credited > 0n) {
+          credit.run(row.mint, Number(claim.credited), Date.now());
+          console.log(`[keeper] ${row.mint} claimed ${claim.credited} lamports`);
+        }
+
+        // 2. Spend only what this coin has credited and not yet spent.
+        const led = readLedger.get(row.mint) || { credited: 0, spent: 0 };
+        const budget = BigInt(led.credited) - BigInt(led.spent);
+        if (budget <= 0n) continue;
+
         const report = await runCycle({
           rpcUrl: RPC_URL, keeper, mint: row.mint,
           legs: JSON.parse(row.legs_json), creator: row.creator, dryRun: false,
-          balanceOverride: (BigInt(FEE_RESERVE) + share).toString(),
+          budget: budget.toString(),
         });
+
+        // 3. Debit only what actually went out. A leg that was skipped or threw
+        //    keeps its share on this coin's books for the next cycle.
+        let used = 0n;
         for (const leg of report.legs) {
           const sig = (leg.results || []).map((r) => r.signature).filter(Boolean).join(",") || null;
+          const ok = !leg.error && !leg.skipped;
+          if (ok) used += BigInt(leg.lamports || 0);
           ins.run(row.mint, leg.kind, leg.bps, Number(leg.lamports || 0), sig,
             leg.error ? "error" : leg.skipped ? "skipped" : "sent", Date.now());
         }
-        const done = report.legs.filter((l) => !l.skipped && !l.error).length;
-        if (done) console.log(`[keeper] ${row.mint} ran ${done} leg(s)`);
+        if (used > 0n) debit.run(Number(used), Date.now(), row.mint);
+        if (used > 0n) console.log(`[keeper] ${row.mint} spent ${used} of ${budget}`);
       } catch (e) {
         console.error("[keeper] cycle failed", row.mint, e.message);
       }
