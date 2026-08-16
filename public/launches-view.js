@@ -151,7 +151,7 @@ async function onAttach(btn) {
   btn.disabled = true;
   btn.textContent = "check your wallet\u2026";
   try {
-    const { attachSplit } = await import(new URL("launch-flow.js?v=c0eb4639", document.baseURI).href);
+    const { attachSplit } = await import(new URL("launch-flow.js?v=11e99e54", document.baseURI).href);
     const r = await attachSplit(mint, hook);
     btn.outerHTML = r.already
       ? '<span class="text-neutral3">split already on chain</span>'

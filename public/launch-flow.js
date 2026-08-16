@@ -792,14 +792,18 @@ export async function readSharingConfig(PublicKey, mint) {
 // already exists. Returns [] when the split on chain already matches.
 export async function splitInstructions(sdk, PublicKey, creator, mint, shares) {
   const cfg = await readSharingConfig(PublicKey, mint);
-  if (cfg && cfg.adminRevoked) {
-    throw new Error("The sharing config for this coin was revoked and cannot be changed");
-  }
   const same = cfg && cfg.holders.length === shares.length &&
     cfg.holders.every((h, i) =>
       h.address.toBase58() === shares[i].address.toBase58() &&
       h.shareBps === shares[i].shareBps);
+  // Order matters. A correct split is revoked ON PURPOSE — that is the coin
+  // being made immutable, the good end state. Checking "revoked" first meant
+  // every properly finished coin reported an error when its split was
+  // re-examined, which reads as breakage. Nothing to do is not a failure.
   if (same) return [];
+  if (cfg && cfg.adminRevoked) {
+    throw new Error("The sharing config for this coin was revoked and cannot be changed");
+  }
 
   const ixs = [];
   // The creator is the sole shareholder of a fresh config. Verified against
