@@ -1,0 +1,6 @@
+# SECRETS — never commit
+.env
+data/keeper.json
+data/*.db
+data/*.db-*
+node_modules/

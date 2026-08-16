@@ -1,0 +1,190 @@
+{
+  "hooks": [
+    {
+      "id": "burn",
+      "name": "Buy & burn",
+      "tagline": "Every fee shrinks the supply.",
+      "legs": [
+        {
+          "kind": "burn",
+          "bps": 10000
+        }
+      ],
+      "description": "The whole fee take is spent buying the coin back off the curve, and everything bought is burned in the same run. Supply only moves one way.",
+      "caveat": "Burning does not put a floor under the price. There are fewer tokens afterwards, but nothing stops people selling into your buy.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "holders",
+      "name": "Holder rewards",
+      "tagline": "Fees paid straight back to the book.",
+      "legs": [
+        {
+          "kind": "holders",
+          "bps": 10000
+        }
+      ],
+      "description": "The fee take is split across every wallet holding the coin, in proportion to balance, and sent as SOL. Nothing is bought and nothing is burned. Holders just get paid.",
+      "caveat": "Wallets under the payout floor get skipped, and the holder list is taken at the moment it runs, so anyone who buys just after that misses the round.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "half-and-half",
+      "name": "Half and half",
+      "tagline": "Buy the coin, pay the holders.",
+      "legs": [
+        {
+          "kind": "burn",
+          "bps": 5000
+        },
+        {
+          "kind": "holders",
+          "bps": 5000
+        }
+      ],
+      "description": "Half the fee take buys the coin back and burns it, the other half is paid out to holders in SOL. The two most common asks, split down the middle.",
+      "caveat": "At low volume neither half is big enough to do much on its own.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "jackpot",
+      "name": "Jackpot",
+      "tagline": "One holder takes the pot.",
+      "legs": [
+        {
+          "kind": "jackpot",
+          "bps": 10000
+        }
+      ],
+      "description": "The fee take goes to a single holder, drawn with odds equal to their share of supply. The draw is seeded from the block hash of the claim, so the roll is reproducible from the chain.",
+      "caveat": "Draws are weighted by balance, so the biggest wallet wins most of the time. Treat it as a lottery, not money back.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "jackpot-burn",
+      "name": "Pot & ashes",
+      "tagline": "A jackpot, funded next to a burn.",
+      "legs": [
+        {
+          "kind": "burn",
+          "bps": 7000
+        },
+        {
+          "kind": "jackpot",
+          "bps": 3000
+        }
+      ],
+      "description": "Seventy per cent of the take is burned, thirty builds a jackpot that goes to one holder each run. Steady deflation with a reason to stay on the book.",
+      "caveat": "Weighted the same way as the plain jackpot, so big bags win more of the draws.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "treasury",
+      "name": "Treasury",
+      "tagline": "Fees fund a wallet everyone can watch.",
+      "legs": [
+        {
+          "kind": "wallet",
+          "bps": 10000
+        }
+      ],
+      "description": "Every fee lands in one named treasury address, declared at mint. It is the ordinary arrangement, with the difference that the address is public before the first trade instead of after.",
+      "caveat": "Nothing gets bought and nothing gets burned. You can see where the money lands, but nothing stops the treasury spending it however it likes.",
+      "cadence": "every-claim",
+      "needsAddress": true
+    },
+    {
+      "id": "salary",
+      "name": "Split the take",
+      "tagline": "A stated cut for the creator, the rest to work.",
+      "legs": [
+        {
+          "kind": "creator",
+          "bps": 2000
+        },
+        {
+          "kind": "burn",
+          "bps": 8000
+        }
+      ],
+      "description": "Twenty per cent goes to the launch wallet and is called what it is. The remaining eighty buys back and burns. The creator gets paid without it being the quiet part.",
+      "caveat": "The creator takes their cut whether the coin is doing well or not.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "top-holders",
+      "name": "Conviction",
+      "tagline": "Rewards weighted to the biggest bags.",
+      "legs": [
+        {
+          "kind": "topholders",
+          "bps": 10000
+        }
+      ],
+      "description": "The take is split pro rata across the twenty-five largest holders only. It concentrates the payout on the wallets carrying the most exposure.",
+      "caveat": "Small holders get nothing here. That is deliberate, and anyone buying should know it up front.",
+      "cadence": "every-claim",
+      "needsAddress": false
+    },
+    {
+      "id": "reserve",
+      "name": "Reserve",
+      "tagline": "Fees accumulate the coin instead of burning it.",
+      "legs": [
+        {
+          "kind": "reserve",
+          "bps": 10000
+        }
+      ],
+      "description": "The take buys the coin and parks it in a reserve wallet declared at mint. The supply stays outstanding but sits somewhere everyone can see, rather than being destroyed.",
+      "caveat": "A reserve can be sold. Unless the key is burned or locked, this says what you mean to do, not what you are held to.",
+      "cadence": "every-claim",
+      "needsAddress": true
+    },
+    {
+      "id": "thirds",
+      "name": "Thirds",
+      "tagline": "Burn, holders, treasury, split evenly.",
+      "legs": [
+        {
+          "kind": "burn",
+          "bps": 3400
+        },
+        {
+          "kind": "holders",
+          "bps": 3300
+        },
+        {
+          "kind": "wallet",
+          "bps": 3300
+        }
+      ],
+      "description": "A third burned, a third paid out to holders, a third to a named treasury. The catch-all when you want all three and no argument about the weights.",
+      "caveat": "Splitting three ways means no leg is big enough to be dramatic.",
+      "cadence": "every-claim",
+      "needsAddress": true
+    }
+  ],
+  "legLabels": {
+    "buyback": "Buy back",
+    "burn": "Buy & burn",
+    "holders": "Holder rewards",
+    "jackpot": "Jackpot",
+    "topholders": "Top holders",
+    "wallet": "Wallet",
+    "creator": "Creator",
+    "reserve": "Reserve buy"
+  },
+  "cadenceLabels": {
+    "every-claim": "Every claim",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "manual": "When you run it"
+  }
+}

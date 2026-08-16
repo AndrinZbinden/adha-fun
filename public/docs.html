@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <base href="./" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f6fb" />
+    <link rel="icon" href="favicon.png" type="image/png" />
+    <link rel="alternate icon" href="favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <title>Docs — Adha</title>
+    <meta
+      name="description"
+      content="Attach an adha to your pump.fun launch and every fee the coin earns gets routed: bought back, burned, paid to holders, or split however you write it. The policy is on chain before the first trade."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Adha" />
+    <meta property="og:title" content="Adha: custom creator fees, on-chain" />
+    <meta
+      property="og:description"
+      content="Programmable creator fees for pump.fun launches. Pick an adha, launch, and the split executes in public."
+    />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    
+    <link rel="stylesheet" href="app.css?v=dc3938da" />
+    <script type="module" src="app.js?v=27b8a629"></script>
+  </head>
+  <body>
+<div id="root"><div class="min-h-dvh flex flex-col bg-surface1"><header class="sticky top-0 z-30 transition-colors duration-200 border-b border-transparent hl-bar"><div class="mx-auto max-w-[1120px] px-6 h-16 flex items-center gap-3"><a class="shrink-0" href="./" data-discover="true"><span><span class="inline-flex items-center gap-2"><img src="adha-logo.png" width="24" height="24" alt="Adha" style="display:block" /><span class="text-[17px] medium tracking-tight text-neutral1">adha</span></span></span></a><div class="flex-1"></div><nav class="hidden sm:flex items-center gap-7 mr-4"><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="hooks" data-discover="true">Adhas</a><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="launch" data-discover="true">Launch</a><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="launches" data-discover="true">My launches</a><a aria-current="page" class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral1 medium" href="docs" data-discover="true">Docs</a></nav><button class="inline-flex items-center justify-center medium whitespace-nowrap rounded-full transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 cursor-pointer select-none bg-neutral1 text-white hover:bg-neutral1/88 h-8 px-3.5 text-[13px] gap-1.5">Connect wallet</button><button class="sm:hidden h-8 w-8 rounded-[10px] hover:bg-surface2 flex items-center justify-center text-neutral2 cursor-pointer" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5h12M2 8h12M2 11.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg></button></div></header><main class="flex-1">
+<div class="hl-col pt-16 pb-6">
+  <h1 class="hl-d-h1 semi tracking-tight">How Adha works</h1>
+  <p class="mt-3 text-[16.5px] text-neutral2 leading-relaxed">Every claim on this page is something you can check yourself. Addresses, costs and program IDs are written out in full so you never have to take our word for any of it. Where something is a limitation, it is written down as a limitation.</p>
+  <div class="hl-toc">
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#spend">What you spend</a>
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#launch">How a launch works</a>
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#split">The fee split</a>
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#keeper">The keeper</a>
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#limits">Known limits</a>
+    <a class="text-brand hover:text-brand-hover transition-colors" href="docs#verify">Verify it yourself</a>
+  </div>
+</div>
+
+<div class="hl-col pb-24 hl-docs">
+
+<section class="hl-sec mt-14">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>OVERVIEW</p><h2 class="hl-d-h2 semi tracking-tight">What Adha is</h2>
+  <p>Adha is a launcher. It mints a coin on <a href="https://pump.fun" target="_blank" rel="noreferrer">pump.fun</a> and, in the same flow, writes a fee-sharing policy for that coin on chain. The policy decides where the coin's creator fees go: bought back, burned, paid to holders, or split however you write it.</p>
+  <p><strong>Adha never holds your money.</strong> There is no deposit, no vault, no account balance. Every transaction is built in your browser and signed in your wallet. The site cannot move funds it was not explicitly asked to move, because it has no key that can.</p>
+  <div class="hl-note">
+    <p class="hl-note-t">The one thing to understand</p>
+    <p>Pump's fee sharing can only pay <em>wallet addresses</em>. It cannot call a program to burn tokens or run a jackpot. So actions like burn, buyback and jackpot route their share to one executor wallet, and a small service performs the action from there. That wallet is named below, and everything it does is a public transaction. If you only trust what is enforced on chain, use the direct legs: <span class="hl-k">creator</span> and <span class="hl-k">wallet</span>.</p>
+  </div>
+</section>
+
+<section id="spend" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>COSTS</p><h2 class="hl-d-h2 semi tracking-tight">What you spend</h2>
+  <p>One launch costs roughly <strong>0.034 SOL</strong> with a 0.01 dev buy, or about <strong>0.024 SOL</strong> without one. It breaks down like this:</p>
+  <div class="hl-table">
+    <div class="hl-row hl-head"><span>Item</span><span>Cost</span><span>Goes to</span></div>
+    <div class="hl-row"><span>Mint the coin</span><span>~0.0155 SOL</span><span>pump.fun and Solana</span></div>
+    <div class="hl-row"><span>Dev buy</span><span>your choice, optional</span><span>your own coin</span></div>
+    <div class="hl-row"><span>Fee-split account rent</span><span>~0.0082 SOL</span><span>locked in the account itself</span></div>
+    <div class="hl-row"><span>Network fees</span><span>a fraction of a cent</span><span>Solana validators</span></div>
+  </div>
+  <p><strong>Adha charges you nothing.</strong> There is no launch fee, no percentage, no cut of your creator fees. The numbers above are pump.fun's cost and Solana's cost, not ours.</p>
+  <p>The rent is not a payment to anyone. It is the deposit Solana requires to keep an account alive, and it sits inside your coin's own fee-split account. The launcher checks your balance before it spends anything, so it refuses up front rather than minting a coin and then failing halfway.</p>
+</section>
+
+<section id="launch" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>LAUNCH</p><h2 class="hl-d-h2 semi tracking-tight">How a launch works</h2>
+  <p>A launch is up to three transactions, and your wallet shows you each one before it goes out.</p>
+  <ol class="hl-steps">
+    <li><span class="hl-n">1</span><div><p class="hl-st">Mint</p><p>Creates the coin on pump.fun. Signed by you and by the throwaway mint keypair. Once this confirms, the coin exists and is registered on this site.</p></div></li>
+    <li><span class="hl-n">2</span><div><p class="hl-st">Dev buy</p><p>Optional, and only if you asked for one. It is a separate transaction, so if it fails your coin still exists and you can simply buy on pump.fun instead.</p></div></li>
+    <li><span class="hl-n">3</span><div><p class="hl-st">Fee split</p><p>Writes the sharing policy on chain. If this one fails, the coin is still yours and the split can be attached later from My launches.</p></div></li>
+  </ol>
+  <h3 class="hl-h3">The address ending in adha</h3>
+  <p>Mint addresses that end in <span class="hl-k">adha</span> are found by brute force: your browser generates keypairs until one lands on that suffix, which takes around 11 million tries. That work happens on your machine, in a background worker, and the site banks up to ten spare addresses so later launches are instant. You can pause the search from the launch page, and it stops on its own once the bank is full.</p>
+  <p>Those keys are generated in your browser and never sent anywhere. A mint keypair signs the creation transaction and holds no authority over the coin afterwards.</p>
+</section>
+
+<section id="split" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>THE SPLIT</p><h2 class="hl-d-h2 semi tracking-tight">The fee split</h2>
+  <p>pump.fun pays creator fees to whoever is listed in the coin's sharing config. Adha writes that list for you. It reads the existing config off chain first and passes the exact accounts the program already holds, rather than guessing.</p>
+  <div class="hl-warn">
+    <p class="hl-note-t">The split is written once and cannot be changed</p>
+    <p>When the config is created, pump marks it non-editable. Nobody can rewrite it afterwards: not you, not us, not pump. Read your split carefully before you sign, because that policy is the coin's policy forever.</p>
+  </div>
+  <h3 class="hl-h3">The legs you can use</h3>
+  <div class="hl-table">
+    <div class="hl-row hl-head"><span>Leg</span><span>What happens</span><span>Enforced by</span></div>
+    <div class="hl-row"><span class="hl-k">creator</span><span>Fees go to your own wallet</span><span>on chain</span></div>
+    <div class="hl-row"><span class="hl-k">wallet</span><span>Fees go to an address you name</span><span>on chain</span></div>
+    <div class="hl-row"><span class="hl-k">burn</span><span>Buy the coin, then burn it</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">buyback</span><span>Buy the coin and hold it</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">holders</span><span>Distribute to holders</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">top-holders</span><span>Distribute to the largest holders</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">jackpot</span><span>Pay one holder at random</span><span>the keeper</span></div>
+    <div class="hl-row"><span class="hl-k">reserve</span><span>Hold for later use</span><span>the keeper</span></div>
+  </div>
+  <p>Shares are written in basis points and must total exactly 100%. Anything that is not a direct payout collapses onto the executor wallet in the on-chain config, which is why a four-leg adha can still show only one or two shareholders on Solscan. That is expected, not a bug.</p>
+  <h3 class="hl-h3">Writing your own</h3>
+  <p>The compiler on <a href="hooks/custom">Adhas &rsaquo; write your own</a> turns a plain sentence into legs. It is deterministic: the same sentence always compiles to the same split, it shows you the result before you launch, and it refuses anything that does not add up to 100%.</p>
+</section>
+
+<section id="keeper" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>THE KEEPER</p><h2 class="hl-d-h2 semi tracking-tight">The keeper</h2>
+  <p>The keeper is the service that performs the actions pump cannot. It is a single Solana wallet:</p>
+  <p class="hl-addr">6xjNfNVyaigQYjLC7vNpUP4cbwHQNNdZhZpreemfvjjT</p>
+  <p>It wakes every 15 minutes, looks at the coins that have action legs, and executes them. Every burn, buy and payout it makes is an ordinary public transaction on that address, so you can audit the whole history without asking anyone. It keeps a small reserve for network fees and skips amounts too small to be worth a transaction.</p>
+  <p>What the keeper <em>cannot</em> do: it cannot touch your wallet, mint tokens, or change a split. It only spends what has been routed to it.</p>
+</section>
+
+<section id="limits" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>LIMITS</p><h2 class="hl-d-h2 semi tracking-tight">Known limits</h2>
+  <p>Things worth knowing before you launch. None of this is hidden in a whitepaper.</p>
+  <ul class="hl-list">
+    <li><strong>Action legs depend on the keeper.</strong> Burn, jackpot and holder payouts are performed by the wallet above, not enforced by a smart contract. If it stops running, those legs stop. Direct legs keep paying regardless, because pump pays them.</li>
+    <li><strong>The split cannot be edited.</strong> Ever. Check it before signing.</li>
+    <li><strong>One executor wallet serves every coin.</strong> Fees arrive with no per-coin label, so the keeper divides the spendable balance across the coins that have action legs. That is an approximation, not per-coin accounting.</li>
+    <li><strong>This site's list is a convenience, not the truth.</strong> The database records what was launched here. The chain is the source of truth, and it can disagree if a launch half-failed.</li>
+    <li><strong>Your wallet can block a transaction.</strong> Wallets add their own safety checks and may reject a launch if the chain moves between signing and sending. Retrying is safe.</li>
+    <li><strong>Coins are risky.</strong> An adha decides where fees go. It does not make a coin succeed, and it is not a yield product or an investment promise.</li>
+  </ul>
+</section>
+
+<section id="verify" class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>VERIFY</p><h2 class="hl-d-h2 semi tracking-tight">Verify it yourself</h2>
+  <p>Do not trust this page. Check it.</p>
+  <div class="hl-table">
+    <div class="hl-row hl-head"><span>What</span><span>Where</span><span></span></div>
+    <div class="hl-row"><span>All of the source code</span><span><a href="https://github.com/AndrinZbinden/adha-fun" target="_blank" rel="noreferrer">github.com/AndrinZbinden/adha-fun</a></span><span>read the launch flow</span></div>
+    <div class="hl-row"><span>The keeper wallet</span><span><a href="https://solscan.io/account/6xjNfNVyaigQYjLC7vNpUP4cbwHQNNdZhZpreemfvjjT" target="_blank" rel="noreferrer">solscan.io</a></span><span>every action it has taken</span></div>
+    <div class="hl-row"><span>Pump's fee program</span><span class="hl-mono">pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ</span><span>holds the sharing configs</span></div>
+    <div class="hl-row"><span>Your own split</span><span><a href="launches">My launches</a></span><span>links to the transaction</span></div>
+  </div>
+  <p>The launcher's key claim is that it holds no keys, and that is checkable: the mint keypair is generated in browser code you can read, and the server has no endpoint that signs on your behalf. Every wallet prompt you see is a transaction you can inspect before approving.</p>
+</section>
+
+<section class="hl-sec mt-16">
+  <p class="hl-eyebrow"><span class="hl-eyerule"></span>FAQ</p><h2 class="hl-d-h2 semi tracking-tight">Questions people actually ask</h2>
+  <div class="hl-qa">
+    <p class="hl-q">Can you rug the split after I launch?</p>
+    <p>No. Once written, the config is marked non-editable by pump's program. There is no admin path back into it.</p>
+    <p class="hl-q">Do you take a cut?</p>
+    <p>No. Adha takes nothing. Your costs are pump's mint cost, the account rent, and network fees.</p>
+    <p class="hl-q">Why does Solscan show one shareholder when my adha has four legs?</p>
+    <p>Because pump can only pay wallets. Non-direct legs are pooled onto the executor and divided by the keeper. Direct legs appear individually.</p>
+    <p class="hl-q">What if the fee split fails but the coin mints?</p>
+    <p>The coin is yours and it is registered. Attach the split from My launches. It has not been written yet, so nothing is locked in.</p>
+    <p class="hl-q">Why is my computer's fan loud on the launch page?</p>
+    <p>The address search is brute force and uses several cores. Pause it from the launch page, or let it fill the bank of ten and stop by itself.</p>
+    <p class="hl-q">Do I have to use an adha address?</p>
+    <p>No. You can skip the search at any point and mint a normal address.</p>
+  </div>
+</section>
+
+</div>
+</main><footer class="rule"><div class="mx-auto max-w-[1120px] px-6 py-10 flex flex-col sm:flex-row gap-5 sm:items-center justify-between"><div class="flex items-center gap-2.5"><img src="adha-logo.png" width="17" height="17" alt="Adha" style="display:block" /><span class="text-[13.5px] text-neutral2">Adha routes creator fees. It never holds them. Every transaction is signed in your wallet.</span></div><div class="flex items-center gap-6 text-[13.5px] text-neutral2"><a class="hover:text-neutral1 transition-colors" href="hooks" data-discover="true">Adhas</a><a class="hover:text-neutral1 transition-colors" href="launch" data-discover="true">Launch</a><a class="hover:text-neutral1 transition-colors" href="docs" data-discover="true">Docs</a><a href="https://pump.fun" target="_blank" rel="noreferrer" class="hover:text-neutral1 transition-colors">pump.fun</a><a href="https://x.com/adhadotfun" target="_blank" rel="noreferrer" class="hover:text-neutral1 transition-colors">X</a></div></div></footer></div></div>
+  
+
+
+  </body>
+</html>

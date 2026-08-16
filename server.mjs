@@ -1,0 +1,511 @@
+// Adha — real backend. Zero npm dependencies (node:http + node:sqlite).
+// Serves the pixel-exact static shell and provides the APIs the original site faked.
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { loadKeeper } from "./executor.mjs";
+import { runCycle, ACTION_KINDS, FEE_RESERVE } from "./keeper.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC = path.join(__dirname, "public");
+const PORT = Number(process.env.PORT || 8791);
+// A rejected fetch inside a request handler used to take the whole process
+// down, which on Railway shows up as a crash mail per deploy. Log and survive.
+process.on("unhandledRejection", (e) => console.error("[unhandled]", e));
+process.on("uncaughtException", (e) => console.error("[uncaught]", e));
+
+const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "hooklaunch.db");
+const KEEPER_PATH = process.env.KEEPER_PATH || path.join(__dirname, "data", "keeper.json");
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
+
+// Everything the launch flow legitimately calls through /api/rpc. Anything
+// else (getProgramAccounts and friends) would turn this into free RPC for
+// whoever finds it.
+// Proof-of-launch for the public registry write path: read the mint
+// transaction back off chain and require that it succeeded, that it really
+// created this mint, and that the wallet claiming it actually signed.
+async function mintProvesCreator(mint, creator, sig) {
+  if (typeof sig !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(sig)) return false;
+  try {
+    const r = await fetch(RPC_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "getTransaction",
+        params: [sig, { maxSupportedTransactionVersion: 0, encoding: "jsonParsed", commitment: "confirmed" }],
+      }),
+    });
+    const tx = (await r.json()).result;
+    if (!tx || tx.meta.err) return false;
+    const keys = tx.transaction.message.accountKeys || [];
+    const has = keys.some((k) => (typeof k === "string" ? k : k.pubkey) === mint);
+    const signed = keys.some((k) => k && k.pubkey === creator && k.signer);
+    return has && signed;
+  } catch {
+    return false;
+  }
+}
+
+const RPC_METHODS = new Set([
+  "getLatestBlockhash", "sendTransaction", "getSignatureStatuses",
+  "getAccountInfo", "getBalance", "getHealth", "simulateTransaction",
+]);
+
+// The executor. Generated on first boot and reused after that; the file is the
+// only copy of the secret, so it lives beside the database on the volume.
+// On Railway there is no keeper file, so accept the secret from an env var
+// (KEEPER_SECRET = the same JSON byte array the file holds). File wins locally.
+const keeper = (() => {
+  if (process.env.KEEPER_SECRET && !fs.existsSync(KEEPER_PATH)) {
+    fs.mkdirSync(path.dirname(KEEPER_PATH), { recursive: true });
+    fs.writeFileSync(KEEPER_PATH, process.env.KEEPER_SECRET.trim());
+    console.log("[keeper] loaded secret from KEEPER_SECRET env var");
+  }
+  return loadKeeper(KEEPER_PATH);
+})();
+console.log(`[keeper] executor address: ${keeper.address}`);
+if (!ADMIN_TOKEN) console.log("[keeper] ADMIN_TOKEN unset - live execution is disabled, dry-run only");
+
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const db = new DatabaseSync(DB_PATH);
+db.exec(`
+CREATE TABLE IF NOT EXISTS launches (
+  mint          TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  symbol        TEXT NOT NULL,
+  creator       TEXT NOT NULL,
+  hook_id       TEXT NOT NULL,
+  legs_json     TEXT NOT NULL,
+  cadence       TEXT NOT NULL DEFAULT 'manual',
+  sharing_config TEXT,
+  authority_revoked INTEGER NOT NULL DEFAULT 0,
+  policy_sig    TEXT,
+  mint_sig      TEXT,
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_launches_creator ON launches(creator);
+CREATE INDEX IF NOT EXISTS idx_launches_created ON launches(created_at DESC);
+CREATE TABLE IF NOT EXISTS runs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  mint       TEXT NOT NULL,
+  leg_kind   TEXT NOT NULL,
+  bps        INTEGER NOT NULL,
+  lamports   INTEGER NOT NULL DEFAULT 0,
+  signature  TEXT,
+  status     TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runs_mint ON runs(mint, created_at DESC);
+`);
+
+const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webp": "image/webp" };
+
+// Route -> captured page. Mirrors the original SPA's URL surface exactly.
+const ROUTES = { "/": "index.html", "/hooks": "hooks.html", "/hooks/custom": "hooks-custom.html",
+  "/launch": "launch.html", "/launches": "launches.html", "/docs": "docs.html" };
+
+const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const LEG_KINDS = new Set(["burn", "holders", "jackpot", "wallet", "creator", "top-holders", "reserve", "buyback"]);
+
+function send(res, code, body, headers = {}) {
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  res.writeHead(code, { "content-length": buf.length, "x-content-type-options": "nosniff", ...headers });
+  res.end(buf);
+}
+const json = (res, code, obj) => send(res, code, JSON.stringify(obj), { "content-type": MIME[".json"] });
+
+function readBody(req, limit = 12 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let n = 0;
+    req.on("data", (c) => {
+      n += c.length;
+      if (n > limit) { reject(new Error("payload too large")); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function validateLegs(legs) {
+  if (!Array.isArray(legs) || legs.length === 0 || legs.length > 10) return "legs must be 1-10 entries";
+  let total = 0;
+  for (const l of legs) {
+    if (!l || typeof l !== "object") return "malformed leg";
+    if (!LEG_KINDS.has(l.kind)) return `unknown leg kind: ${l.kind}`;
+    if (!Number.isInteger(l.bps) || l.bps <= 0 || l.bps > 10000) return "leg bps must be 1-10000";
+    if (l.address != null && !B58.test(String(l.address))) return "leg address is not a valid pubkey";
+    total += l.bps;
+  }
+  // pump.fun fee-sharing requires shares to sum to exactly 10000 bps.
+  if (total !== 10000) return `legs must sum to 10000 bps (got ${total})`;
+  return null;
+}
+
+async function handleApi(req, res, url) {
+  const p = url.pathname;
+
+  // --- public config -------------------------------------------------------
+  // EXECUTOR is the address that receives the SOL for action legs (burn,
+  // holder rewards, jackpot, reserve) and actually performs them. Unset means
+  // no executor exists yet, and those legs fall back to the creator's wallet.
+  if (p === "/api/config" && req.method === "GET") {
+    // RPC_URL is deliberately NOT returned: it carries the Helius API key, and
+    // this endpoint is read by every browser that opens the site. The frontend
+    // reaches the chain through /api/rpc instead, which keeps the key here.
+    return json(res, 200, {
+      executor: keeper.address,
+      liveExecution: !!ADMIN_TOKEN,
+    });
+  }
+
+  // --- run the hooks for one mint -----------------------------------------
+  // Dry-run is open (it only simulates). Live execution moves real SOL, so it
+  // needs the admin token.
+  if (p === "/api/execute" && req.method === "POST") {
+    const body = await readBody(req, 64 * 1024);
+    let b; try { b = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    if (!B58.test(String(b.mint || ""))) return json(res, 400, { error: "invalid mint" });
+    const row = db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint));
+    if (!row) return json(res, 404, { error: "mint not registered" });
+
+    const dryRun = b.dryRun !== false;
+    if (!dryRun) {
+      const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "live execution requires the admin token" });
+    }
+
+    const legs = JSON.parse(row.legs_json);
+    let report;
+    try {
+      report = await runCycle({
+        rpcUrl: RPC_URL, keeper, mint: row.mint, legs,
+        creator: row.creator, dryRun,
+        balanceOverride: b.balanceOverride,
+      });
+    } catch (e) {
+      return json(res, 502, { error: e.message });
+    }
+
+    if (!dryRun) {
+      const ins = db.prepare("INSERT INTO runs (mint,leg_kind,bps,lamports,signature,status,created_at) VALUES (?,?,?,?,?,?,?)");
+      for (const leg of report.legs) {
+        const sig = (leg.results || []).map((r) => r.signature).filter(Boolean).join(",") || null;
+        ins.run(row.mint, leg.kind, leg.bps, Number(leg.lamports || 0), sig,
+          leg.error ? "error" : leg.skipped ? "skipped" : "sent", Date.now());
+      }
+    }
+    return json(res, 200, report);
+  }
+
+  // --- RPC proxy -----------------------------------------------------------
+  if (p === "/api/rpc" && req.method === "POST") {
+    // This proxy spends the Helius quota, so it is not a free public endpoint:
+    // requests must come from our own pages, and may only call the handful of
+    // methods the launch flow actually needs.
+    const origin = req.headers.origin || req.headers.referer || "";
+    const host = req.headers.host || "";
+    if (origin && host && !origin.includes(host)) {
+      return json(res, 403, { error: "cross-origin RPC is not allowed" });
+    }
+    const body = await readBody(req, 1024 * 1024);
+    let call; try { call = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    const calls = Array.isArray(call) ? call : [call];
+    const bad = calls.find((c) => !c || !RPC_METHODS.has(c.method));
+    if (bad) return json(res, 403, { error: `method not allowed: ${bad && bad.method}` });
+    const r = await fetch(RPC_URL, {
+      method: "POST", headers: { "content-type": "application/json" }, body,
+    });
+    return send(res, r.status, Buffer.from(await r.arrayBuffer()), { "content-type": MIME[".json"] });
+  }
+
+  // --- pump.fun IPFS metadata upload (multipart passthrough) ---------------
+  if (p === "/api/ipfs" && req.method === "POST") {
+    const body = await readBody(req);
+    const ct = req.headers["content-type"];
+    if (!ct || !ct.includes("multipart/form-data")) return json(res, 400, { error: "expected multipart/form-data" });
+    const r = await fetch("https://pump.fun/api/ipfs", { method: "POST", headers: { "content-type": ct }, body });
+    const txt = await r.text();
+    return send(res, r.status, txt, { "content-type": r.headers.get("content-type") || MIME[".json"] });
+  }
+
+  // --- PumpPortal local trade builder (returns unsigned tx bytes) ----------
+  if (p === "/api/trade-local" && req.method === "POST") {
+    const body = await readBody(req, 1024 * 1024);
+    let parsed; try { parsed = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    if (!parsed || typeof parsed !== "object" || !parsed.action) return json(res, 400, { error: "missing action" });
+    const r = await fetch("https://pumpportal.fun/api/trade-local", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(parsed),
+    });
+    const buf = Buffer.from(await r.arrayBuffer());
+    const type = r.headers.get("content-type") || "application/octet-stream";
+    return send(res, r.status, buf, { "content-type": type });
+  }
+
+  // --- Launch registry (the thing that was localStorage) -------------------
+  if (p === "/api/launches" && req.method === "GET") {
+    const creator = url.searchParams.get("creator");
+    const limit = Math.min(Number(url.searchParams.get("limit") || 100), 500);
+    let rows;
+    if (creator) {
+      if (!B58.test(creator)) return json(res, 400, { error: "invalid creator pubkey" });
+      rows = db.prepare("SELECT * FROM launches WHERE creator=? ORDER BY created_at DESC LIMIT ?").all(creator, limit);
+    } else {
+      rows = db.prepare("SELECT * FROM launches ORDER BY created_at DESC LIMIT ?").all(limit);
+    }
+    return json(res, 200, { launches: rows.map(shape) });
+  }
+
+  if (p === "/api/launches" && req.method === "POST") {
+    // This used to demand the admin token, which no browser can hold, so every
+    // real launch was rejected with a 401 and the registry stayed empty. The
+    // write path proves itself on chain instead: the mint signature has to
+    // exist, have succeeded, and carry both this mint and this creator. That
+    // blocks spam and impersonation without putting a secret in the page.
+    const body = await readBody(req, 256 * 1024);
+    let b; try { b = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    for (const f of ["mint", "name", "symbol", "creator", "hookId", "legs"]) {
+      if (b[f] == null) return json(res, 400, { error: `missing field: ${f}` });
+    }
+    if (!B58.test(String(b.mint))) return json(res, 400, { error: "invalid mint" });
+    if (!B58.test(String(b.creator))) return json(res, 400, { error: "invalid creator" });
+    const legErr = validateLegs(b.legs);
+    if (legErr) return json(res, 400, { error: legErr });
+    if (b.sharingConfig != null && !B58.test(String(b.sharingConfig))) return json(res, 400, { error: "invalid sharingConfig" });
+    if (!(await mintProvesCreator(String(b.mint), String(b.creator), b.mintSig))) {
+      return json(res, 403, { error: "mint signature does not prove this coin and creator" });
+    }
+    const now = Date.now();
+    // Upsert, not insert-once. The client registers the coin as soon as the
+    // MINT confirms, then calls again with policy_sig once the split lands —
+    // otherwise a rejected/blocked second signature loses the launch entirely.
+    // Later calls may only fill in signatures, never blank them out.
+    db.prepare(`INSERT INTO launches
+      (mint,name,symbol,creator,hook_id,legs_json,cadence,sharing_config,authority_revoked,policy_sig,mint_sig,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(mint) DO UPDATE SET
+        hook_id        = excluded.hook_id,
+        legs_json      = excluded.legs_json,
+        sharing_config = COALESCE(excluded.sharing_config, launches.sharing_config),
+        policy_sig     = COALESCE(excluded.policy_sig,     launches.policy_sig),
+        mint_sig       = COALESCE(excluded.mint_sig,       launches.mint_sig)`).run(
+      String(b.mint), String(b.name).slice(0, 64), String(b.symbol).slice(0, 16), String(b.creator),
+      String(b.hookId).slice(0, 40), JSON.stringify(b.legs), String(b.cadence || "manual").slice(0, 20),
+      b.sharingConfig ? String(b.sharingConfig) : null, b.authorityRevoked ? 1 : 0,
+      b.policySig ? String(b.policySig) : null, b.mintSig ? String(b.mintSig) : null, now);
+    const row = db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint));
+    return json(res, 201, { ok: true, mint: b.mint, launch: shape(row) });
+  }
+
+  // Live market data for the launches page: logo, market cap, holders.
+  // Proxied through the server because pump.fun's API sends no CORS header,
+  // and cached briefly so a page full of coins is not a burst of upstream hits.
+  if (p === "/api/market" && req.method === "GET") {
+    const mints = String(url.searchParams.get("mints") || "").split(",")
+      .filter((m) => B58.test(m)).slice(0, 8);
+    const out = {};
+    await Promise.all(mints.map(async (m) => {
+      try { out[m] = await marketFor(m); } catch { out[m] = {}; }
+    }));
+    return json(res, 200, { market: out });
+  }
+
+  // Record a split that was attached after the launch itself. Same proof rule
+  // as the registry write: the signature has to exist on chain, have
+  // succeeded, and carry both this mint and the creator on record for it.
+  if (p === "/api/launches/split" && req.method === "POST") {
+    const body = await readBody(req, 8 * 1024);
+    let b; try { b = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    if (!B58.test(String(b.mint || ""))) return json(res, 400, { error: "invalid mint" });
+    const row = db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint));
+    if (!row) return json(res, 404, { error: "not found" });
+    if (!(await mintProvesCreator(String(b.mint), row.creator, b.policySig))) {
+      return json(res, 403, { error: "signature does not prove this coin and creator" });
+    }
+    db.prepare("UPDATE launches SET policy_sig=? WHERE mint=?").run(String(b.policySig), String(b.mint));
+    return json(res, 200, { ok: true, launch: shape(db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint))) });
+  }
+
+  const one = p.match(/^\/api\/launches\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+  if (one && req.method === "GET") {
+    const row = db.prepare("SELECT * FROM launches WHERE mint=?").get(one[1]);
+    if (!row) return json(res, 404, { error: "not found" });
+    const runs = db.prepare("SELECT leg_kind,bps,lamports,signature,status,created_at FROM runs WHERE mint=? ORDER BY created_at DESC LIMIT 200").all(one[1]);
+    return json(res, 200, { launch: shape(row), runs });
+  }
+
+  if (p === "/api/health") {
+    const n = db.prepare("SELECT COUNT(*) c FROM launches").get().c;
+    return json(res, 200, { ok: true, launches: n, rpc: RPC_URL, ts: Date.now() });
+  }
+
+  return json(res, 404, { error: "no such endpoint" });
+}
+
+/* ---------------- live market data ---------------- */
+const MARKET_TTL = 60_000;
+const marketCache = new Map();
+
+async function holderCount(mint, exclude) {
+  // Helius returns token accounts a page at a time. Small launches fit in one
+  // page; cap the walk so a big coin cannot stall the request.
+  let cursor = null, owners = new Set();
+  for (let page = 0; page < 2; page++) {
+    const params = { mint, limit: 1000, options: { showZeroBalance: false } };
+    if (cursor) params.cursor = cursor;
+    const r = await fetch(RPC_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccounts", params }),
+      signal: AbortSignal.timeout(8000),
+    }).then((x) => x.json()).catch(() => null);
+    const accs = r && r.result && r.result.token_accounts;
+    if (!accs || !accs.length) break;
+    for (const a of accs) {
+      if (Number(a.amount) > 0 && a.owner && a.owner !== exclude) owners.add(a.owner);
+    }
+    cursor = r.result.cursor;
+    if (!cursor) break;
+  }
+  return owners.size;
+}
+
+async function marketFor(mint) {
+  const hit = marketCache.get(mint);
+  if (hit && Date.now() - hit.at < MARKET_TTL) return hit.data;
+  let data = { image: null, mcapUsd: null, holders: null, complete: false };
+  try {
+    const c = await fetch("https://frontend-api-v3.pump.fun/coins/" + mint, {
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(8000),
+    }).then((r) => (r.ok ? r.json() : null));
+    if (c) {
+      data.image = c.image_uri || null;
+      data.mcapUsd = typeof c.usd_market_cap === "number" ? c.usd_market_cap : null;
+      data.complete = !!c.complete;
+      // The bonding curve holds the unsold supply and is not a holder.
+      data.holders = await holderCount(mint, c.bonding_curve).catch(() => null);
+    }
+  } catch {}
+  marketCache.set(mint, { at: Date.now(), data });
+  return data;
+}
+
+function shape(r) {
+  return { mint: r.mint, name: r.name, symbol: r.symbol, creator: r.creator, hookId: r.hook_id,
+    legs: JSON.parse(r.legs_json), cadence: r.cadence, sharingConfig: r.sharing_config,
+    authorityRevoked: !!r.authority_revoked, policySig: r.policy_sig, mintSig: r.mint_sig,
+    createdAt: r.created_at };
+}
+
+function serveStatic(res, rel) {
+  const full = path.join(PUBLIC, rel);
+  if (!full.startsWith(PUBLIC)) return send(res, 403, "forbidden");
+  fs.readFile(full, (err, data) => {
+    if (err) return send(res, 404, "not found");
+    const ext = path.extname(full).toLowerCase();
+    // .js was cached for an hour, so browsers kept running stale code after a
+    // fix and reported errors from line numbers that no longer exist.
+    const cache = (ext === ".html" || ext === ".js" || ext === ".css" || ext === ".json")
+      ? "no-cache" : "public, max-age=3600";
+    send(res, 200, data, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  try {
+    if (url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
+    // Trailing-slash redirect: /hooks/ -> ../hooks, /hooks/custom/ -> ../custom
+    if (url.pathname.length > 1 && url.pathname.endsWith("/") && !url.pathname.endsWith("//")) {
+      const stripped = url.pathname.slice(0, -1);
+      if (ROUTES[stripped]) {
+        const segment = stripped.split("/").pop();
+        return send(res, 301, "Redirecting to " + segment, { location: "../" + segment });
+      }
+    }
+    const routed = ROUTES[url.pathname.replace(/\/+$/, "") || "/"];
+    if (routed) return serveStatic(res, routed);
+    if (req.method === "GET") return serveStatic(res, url.pathname.slice(1));
+    return send(res, 405, "method not allowed");
+  } catch (e) {
+    console.error("[err]", url.pathname, e.message);
+    if (!res.headersSent) json(res, 500, { error: e.message });
+  }
+});
+
+/* ---- keeper scheduler -----------------------------------------------------
+   Nothing used to run the hooks: /api/execute only fired when something called
+   it, so a funded executor sat idle forever. This ticks it on a timer.
+
+   Fees from every coin land in ONE executor wallet with no per-mint tag, so
+   there is no honest way to know which coin earned what. The spendable balance
+   is therefore split evenly across the coins that have action legs, rather
+   than letting the first coin in the list drain the wallet. */
+const CYCLE_MIN = Number(process.env.KEEPER_INTERVAL_MIN || 15);
+let cycling = false;
+
+async function keeperTick() {
+  if (cycling) return;                      // a slow tick must not overlap
+  if (!ADMIN_TOKEN) return;                 // same gate as live HTTP execution
+  cycling = true;
+  try {
+    const rows = db.prepare("SELECT * FROM launches").all();
+    const live = rows.filter((r) => {
+      try { return JSON.parse(r.legs_json).some((l) => ACTION_KINDS.has(l.kind)); }
+      catch { return false; }
+    });
+    if (!live.length) return;
+
+    const bal = await fetch(RPC_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance",
+        params: [keeper.address, { commitment: "confirmed" }] }),
+    }).then((r) => r.json());
+    const balance = BigInt(bal?.result?.value ?? 0);
+    const spendable = balance > BigInt(FEE_RESERVE) ? balance - BigInt(FEE_RESERVE) : 0n;
+    if (spendable === 0n) return;
+
+    const share = spendable / BigInt(live.length);
+    const ins = db.prepare("INSERT INTO runs (mint,leg_kind,bps,lamports,signature,status,created_at) VALUES (?,?,?,?,?,?,?)");
+
+    for (const row of live) {
+      try {
+        const report = await runCycle({
+          rpcUrl: RPC_URL, keeper, mint: row.mint,
+          legs: JSON.parse(row.legs_json), creator: row.creator, dryRun: false,
+          balanceOverride: (BigInt(FEE_RESERVE) + share).toString(),
+        });
+        for (const leg of report.legs) {
+          const sig = (leg.results || []).map((r) => r.signature).filter(Boolean).join(",") || null;
+          ins.run(row.mint, leg.kind, leg.bps, Number(leg.lamports || 0), sig,
+            leg.error ? "error" : leg.skipped ? "skipped" : "sent", Date.now());
+        }
+        const done = report.legs.filter((l) => !l.skipped && !l.error).length;
+        if (done) console.log(`[keeper] ${row.mint} ran ${done} leg(s)`);
+      } catch (e) {
+        console.error("[keeper] cycle failed", row.mint, e.message);
+      }
+    }
+  } catch (e) {
+    console.error("[keeper] tick failed", e.message);
+  } finally {
+    cycling = false;
+  }
+}
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`adha server on :${PORT} (db ${DB_PATH})`);
+  if (!ADMIN_TOKEN) {
+    console.log("[keeper] scheduler off: ADMIN_TOKEN unset");
+  } else if (CYCLE_MIN > 0) {
+    console.log(`[keeper] scheduler on: every ${CYCLE_MIN} min`);
+    setTimeout(keeperTick, 60_000).unref?.();          // let boot settle first
+    setInterval(keeperTick, CYCLE_MIN * 60_000).unref?.();
+  }
+});
