@@ -120,6 +120,57 @@ const ROUTES = { "/": "index.html", "/hooks": "hooks.html", "/hooks/custom": "ho
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const LEG_KINDS = new Set(["burn", "holders", "jackpot", "wallet", "creator", "top-holders", "reserve", "buyback"]);
 
+/* ---- per-IP rate limiting -------------------------------------------------
+   Four endpoints spend real money or quota on behalf of an anonymous caller:
+   the RPC proxy (Helius quota), the IPFS and PumpPortal passthroughs (our
+   reputation with those services), and market data. Nothing stopped a script
+   from hammering them.
+
+   Token bucket per IP per endpoint. Buckets are sized so that a real launch
+   never touches them: a full launch makes roughly 30-40 RPC calls in a burst,
+   against a bucket of 240 that refills 4/s. The intent is to stop scripted
+   abuse, not to police humans. */
+const BUCKETS = {
+  "/api/rpc":         { cap: 240, refill: 4.0 },   // whole launch flow ≈ 40
+  "/api/market":      { cap: 60,  refill: 0.5 },   // 60s cache absorbs the rest
+  "/api/ipfs":        { cap: 12,  refill: 0.05 },  // one per launch, ~1/20s back
+  "/api/trade-local": { cap: 30,  refill: 0.25 },
+  "/api/execute":     { cap: 20,  refill: 0.1 },
+};
+const buckets = new Map();
+
+function clientIp(req) {
+  // Cloudflare sits in front of Railway, so the socket address is always a
+  // proxy. cf-connecting-ip is set by Cloudflare and cannot be spoofed by the
+  // client; x-forwarded-for is the fallback and its FIRST entry is the origin.
+  const cf = req.headers["cf-connecting-ip"];
+  if (cf) return String(cf).trim();
+  const xff = req.headers["x-forwarded-for"];
+  if (xff) return String(xff).split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function rateLimit(req, p) {
+  const cfg = BUCKETS[p];
+  if (!cfg) return null;                       // unlisted endpoint: no limit
+  const key = p + "|" + clientIp(req);
+  const now = Date.now();
+  let b = buckets.get(key);
+  if (!b) { b = { tokens: cfg.cap, seen: now }; buckets.set(key, b); }
+  b.tokens = Math.min(cfg.cap, b.tokens + ((now - b.seen) / 1000) * cfg.refill);
+  b.seen = now;
+  if (b.tokens < 1) return Math.ceil((1 - b.tokens) / cfg.refill);  // seconds
+  b.tokens -= 1;
+  return null;
+}
+
+// An unbounded Map keyed by IP is itself a memory exhaustion vector. Drop
+// buckets that have been idle long enough to have refilled to full anyway.
+setInterval(() => {
+  const cutoff = Date.now() - 15 * 60_000;
+  for (const [k, b] of buckets) if (b.seen < cutoff) buckets.delete(k);
+}, 5 * 60_000).unref?.();
+
 function send(res, code, body, headers = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
   res.writeHead(code, { "content-length": buf.length, "x-content-type-options": "nosniff", ...headers });
@@ -157,6 +208,12 @@ function validateLegs(legs) {
 
 async function handleApi(req, res, url) {
   const p = url.pathname;
+
+  const wait = rateLimit(req, p);
+  if (wait !== null) {
+    return json(res, 429, { error: "too many requests, slow down" },
+      { "retry-after": String(wait) });
+  }
 
   // --- public config -------------------------------------------------------
   // EXECUTOR is the address that receives the SOL for action legs (burn,
