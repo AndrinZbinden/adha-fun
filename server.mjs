@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import crypto from "node:crypto";
 import { loadKeeper, findProgramAddress, b58decode, b58encode } from "./executor.mjs";
 import { runCycle, ACTION_KINDS, FEE_RESERVE } from "./keeper.mjs";
 import { claimForMint } from "./claim.mjs";
@@ -21,6 +22,16 @@ const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data", "hooklaunch.db");
 const KEEPER_PATH = process.env.KEEPER_PATH || path.join(__dirname, "data", "keeper.json");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
+
+/* Compare the admin token without leaking its contents through timing. A plain
+   !== returns as soon as two bytes differ, which measurably narrows a guess. */
+function adminOk(req) {
+  if (!ADMIN_TOKEN) return false;
+  const got = String((req.headers.authorization || "")).replace(/^Bearer\s+/i, "");
+  const a = Buffer.from(got), b = Buffer.from(ADMIN_TOKEN);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 // Everything the launch flow legitimately calls through /api/rpc. Anything
 // else (getProgramAccounts and friends) would turn this into free RPC for
@@ -137,6 +148,14 @@ const BUCKETS = {
   "/api/ipfs":        { cap: 12,  refill: 0.05 },  // one per launch, ~1/20s back
   "/api/trade-local": { cap: 30,  refill: 0.25 },
   "/api/execute":     { cap: 20,  refill: 0.1 },
+  // The registry endpoints were unlisted, and an unlisted path is unlimited.
+  // That let a script guess the admin token as fast as it could open sockets,
+  // and let anyone make the proof-checking path spend RPC calls for free.
+  "/api/launches":        { cap: 40, refill: 0.5 },
+  "/api/launches/seed":   { cap: 10, refill: 0.05 },
+  "/api/launches/split":  { cap: 20, refill: 0.2 },
+  "/api/config":          { cap: 60, refill: 1.0 },
+  "/api/health":          { cap: 60, refill: 1.0 },
 };
 const buckets = new Map();
 
@@ -317,8 +336,7 @@ async function handleApi(req, res, url) {
 
     const dryRun = b.dryRun !== false;
     if (!dryRun) {
-      const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "live execution requires the admin token" });
+      if (!adminOk(req)) return json(res, 401, { error: "live execution requires the admin token" });
     }
 
     const legs = JSON.parse(row.legs_json);
@@ -373,7 +391,7 @@ async function handleApi(req, res, url) {
 
   // --- pump.fun IPFS metadata upload (multipart passthrough) ---------------
   if (p === "/api/ipfs" && req.method === "POST") {
-    const body = await readBody(req);
+    const body = await readBody(req, 3 * 1024 * 1024);
     const ct = req.headers["content-type"];
     if (!ct || !ct.includes("multipart/form-data")) return json(res, 400, { error: "expected multipart/form-data" });
     const r = await fetch("https://pump.fun/api/ipfs", { method: "POST", headers: { "content-type": ct }, body });
@@ -397,7 +415,9 @@ async function handleApi(req, res, url) {
   // --- Launch registry (the thing that was localStorage) -------------------
   if (p === "/api/launches" && req.method === "GET") {
     const creator = url.searchParams.get("creator");
-    const limit = Math.min(Number(url.searchParams.get("limit") || 100), 500);
+    // A negative LIMIT means "no limit" in sqlite, so clamp the low end too.
+    const n = Number(url.searchParams.get("limit"));
+    const limit = Math.min(Math.max(Number.isFinite(n) && n > 0 ? Math.floor(n) : 100, 1), 500);
     let rows;
     if (creator) {
       if (!B58.test(creator)) return json(res, 400, { error: "invalid creator pubkey" });
@@ -454,8 +474,7 @@ async function handleApi(req, res, url) {
   // stops being listed here and stops being worked by the keeper, which reads
   // its queue from this table. Admin only, for obvious reasons.
   if (p === "/api/launches" && req.method === "DELETE") {
-    const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "admin token required" });
+    if (!adminOk(req)) return json(res, 401, { error: "admin token required" });
     const mint = url.searchParams.get("mint");
     const all = url.searchParams.get("all") === "1";
     if (!mint && !all) return json(res, 400, { error: "pass mint=<pubkey> or all=1" });
@@ -485,8 +504,7 @@ async function handleApi(req, res, url) {
   // launch that has not minted. No on-chain proof exists to check, so this is
   // admin only, and the blank fields fill themselves in once the coin is live.
   if (p === "/api/launches/seed" && req.method === "POST") {
-    const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "admin token required" });
+    if (!adminOk(req)) return json(res, 401, { error: "admin token required" });
     const body = await readBody(req, 16 * 1024);
     let b; try { b = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
     if (!B58.test(String(b.mint || ""))) return json(res, 400, { error: "invalid mint" });
@@ -654,9 +672,20 @@ function shape(r) {
     createdAt: r.created_at };
 }
 
+const SEC_HEADERS = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+};
+
 function serveStatic(res, rel) {
-  const full = path.join(PUBLIC, rel);
-  if (!full.startsWith(PUBLIC)) return send(res, 403, "forbidden");
+  const full = path.resolve(PUBLIC, rel);
+  // startsWith(PUBLIC) alone also accepts a sibling like <PUBLIC>-old, because
+  // that string does start with the prefix. Require the separator.
+  if (full !== PUBLIC && !full.startsWith(PUBLIC + path.sep)) return send(res, 403, "forbidden");
   fs.readFile(full, (err, data) => {
     if (err) return send(res, 404, "not found");
     const ext = path.extname(full).toLowerCase();
@@ -664,7 +693,8 @@ function serveStatic(res, rel) {
     // fix and reported errors from line numbers that no longer exist.
     const cache = (ext === ".html" || ext === ".js" || ext === ".css" || ext === ".json")
       ? "no-cache" : "public, max-age=3600";
-    send(res, 200, data, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
+    send(res, 200, data, { ...SEC_HEADERS,
+      "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
   });
 }
 
