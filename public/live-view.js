@@ -118,6 +118,9 @@ export async function initLive() {
     return;
   }
   if (!coins.length) {
+    // The counter is set here too, otherwise an empty registry leaves it
+    // reading "loading..." for good.
+    count.textContent = "0 coins";
     grid.innerHTML = '<p class="lv-empty">No coins yet. The first one launched here shows up on this page.</p>';
     return;
   }
