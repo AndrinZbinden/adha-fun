@@ -345,7 +345,10 @@ async function handleApi(req, res, url) {
       report = await runCycle({
         rpcUrl: RPC_URL, keeper, mint: row.mint, legs,
         creator: row.creator, dryRun,
-        balanceOverride: b.balanceOverride,
+        // Straight off the request body before; a string or a negative here
+        // reached the budget planner and skewed the whole simulation.
+        balanceOverride: Number.isFinite(Number(b.balanceOverride)) && Number(b.balanceOverride) >= 0
+          ? Math.floor(Number(b.balanceOverride)) : undefined,
       });
     } catch (e) {
       return json(res, 502, { error: e.message });

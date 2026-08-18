@@ -158,10 +158,16 @@ export async function initLive() {
     if (!m) return;
     const q = (a) => grid.querySelector("[data-" + a + '="' + CSS.escape(mint) + '"]');
     if (m.image) {
-      const url = "url('" + String(m.image).replace(/['\\]/g, "") + "')";
+      // pump.fun serves whatever image URI the coin's creator uploaded, so this
+      // string is attacker-controlled. Stripping quotes was not enough: a ")"
+      // closes url() early and everything after it lands as live CSS. Only
+      // http(s) is allowed through, and it is percent-encoded on the way in.
+      const raw = String(m.image);
+      const safe = /^https?:\/\//i.test(raw) ? encodeURI(raw).replace(/[()'"\\]/g, encodeURIComponent) : "";
+      const url = safe ? "url('" + safe + "')" : "";
       const logo = q("logo"), art = q("art");
-      if (logo) logo.style.backgroundImage = url;
-      if (art) art.style.backgroundImage = url;
+      if (url && logo) logo.style.backgroundImage = url;
+      if (url && art) art.style.backgroundImage = url;
     }
     const sym = q("sym"), nm = q("name");
     if (sym && m.symbol) sym.textContent = "$" + m.symbol;
