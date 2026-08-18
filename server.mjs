@@ -456,15 +456,21 @@ async function handleApi(req, res, url) {
     if (mint && !B58.test(mint)) return json(res, 400, { error: "invalid mint" });
     // The per-coin books go with it, otherwise a mint reused later would
     // inherit a stale balance and be handed money it never earned.
-    const wipe = db.transaction((m) => {
-      const where = m ? " WHERE mint=?" : "";
-      const args = m ? [m] : [];
-      const n = db.prepare("DELETE FROM launches" + where).run(...args).changes;
+    // node:sqlite has no transaction() helper, so the statements are wrapped by
+    // hand and rolled back together if any of the three fails.
+    const where = mint ? " WHERE mint=?" : "";
+    const args = mint ? [mint] : [];
+    let removed = 0;
+    db.exec("BEGIN");
+    try {
+      removed = Number(db.prepare("DELETE FROM launches" + where).run(...args).changes || 0);
       db.prepare("DELETE FROM ledger" + where).run(...args);
       db.prepare("DELETE FROM runs" + where).run(...args);
-      return n;
-    });
-    const removed = wipe(mint || null);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      return json(res, 500, { error: String(e.message || e).slice(0, 120) });
+    }
     console.log(`[registry] removed ${removed} launch${removed === 1 ? "" : "es"}${mint ? " (" + mint + ")" : " (all)"}`);
     return json(res, 200, { ok: true, removed });
   }
