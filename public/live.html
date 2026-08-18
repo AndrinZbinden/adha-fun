@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <base href="./" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f6fb" />
+    <link rel="icon" href="favicon.png" type="image/png" />
+    <link rel="alternate icon" href="favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <title>Live · Adha</title>
+    <meta
+      name="description"
+      content="Attach an adha to your pump.fun launch and every fee the coin earns gets routed: bought back, burned, paid to holders, or split however you write it. The policy is on chain before the first trade."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Adha" />
+    <meta property="og:title" content="Adha: custom creator fees, on-chain" />
+    <meta
+      property="og:description"
+      content="Programmable creator fees for pump.fun launches. Pick an adha, launch, and the split executes in public."
+    />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    
+    <link rel="stylesheet" href="app.css?v=dc3938da" />
+    <script type="module" src="app.js?v=6294ab8b"></script>
+  
+    <style>
+      /* Live grid. Uses the site's own tokens so it inherits any theme change.
+         Written as plain CSS rather than utility classes because app.css is a
+         compiled bundle: a class that no page already uses would not exist. */
+      .lv-head { padding-top: 3.25rem; }
+      .lv-h1 { font-size: 34px; font-weight: 600; letter-spacing: -.02em; color: var(--color-neutral1); }
+      .lv-sub { margin-top: .6rem; font-size: 15.5px; color: var(--color-neutral2); line-height: 1.6; max-width: 46rem; }
+      .lv-dot { display:inline-block; width:7px; height:7px; border-radius:99px; background:var(--color-brand);
+                margin-right:.55rem; vertical-align:middle; animation: lvpulse 2s ease-in-out infinite; }
+      @keyframes lvpulse { 0%,100% { opacity:1; transform:scale(1) } 50% { opacity:.35; transform:scale(.82) } }
+      .lv-chips { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1.6rem; align-items:center; }
+      .lv-chips button { height:32px; padding:0 .85rem; border-radius:99px; font-size:13px; cursor:pointer;
+                border:1px solid var(--color-surface3); background:var(--color-surface2); color:var(--color-neutral2);
+                transition:background .15s, color .15s, border-color .15s; }
+      .lv-chips button:hover { color:var(--color-neutral1); }
+      .lv-chips button.on { background:var(--color-neutral1); border-color:var(--color-neutral1); color:#fff; }
+      .lv-count { margin-left:auto; font-size:13px; color:var(--color-neutral3); }
+      .lv-grid { display:grid; gap:1rem; margin-top:1.25rem;
+                 grid-template-columns:repeat(auto-fill, minmax(310px, 1fr)); }
+      .lv-card { position:relative; overflow:hidden; padding:1.1rem 1.15rem 1rem;
+                 border:1px solid var(--color-surface3); border-radius:16px; background:var(--color-surface2);
+                 transition:border-color .15s, box-shadow .15s, transform .15s; }
+      .lv-card:hover { border-color:#120f1926; box-shadow:0 6px 22px #120f190f; transform:translateY(-1px); }
+      /* The coin's own artwork, ghosted into the corner the way a terminal
+         card does it: recognisable at a glance, never competing with the text. */
+      .lv-art { position:absolute; right:-26px; bottom:-26px; width:132px; height:132px; border-radius:99px;
+                background-size:cover; background-position:center; opacity:.13; pointer-events:none; }
+      .lv-top { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; }
+      .lv-logo { width:38px; height:38px; border-radius:99px; background:var(--color-surface3);
+                 background-size:cover; background-position:center; display:block; flex:none; }
+      .lv-actions { display:flex; gap:.35rem; position:relative; z-index:1; }
+      .lv-ico { height:26px; min-width:26px; padding:0 .5rem; display:inline-flex; align-items:center; justify-content:center;
+                border:1px solid var(--color-surface3); border-radius:8px; background:transparent; cursor:pointer;
+                font-size:11.5px; color:var(--color-neutral2); text-decoration:none; transition:background .15s, color .15s; }
+      .lv-ico:hover { background:var(--color-surface3); color:var(--color-neutral1); }
+      .lv-sym { display:inline-block; margin-top:.85rem; font-size:13px; font-weight:500; color:var(--color-brand);
+                text-decoration:none; position:relative; z-index:1; }
+      .lv-sym:hover { color:var(--color-brand-hover); }
+      .lv-name { font-size:14.5px; color:var(--color-neutral2); margin-top:.1rem; }
+      .lv-mcap { font-size:28px; font-weight:600; letter-spacing:-.02em; color:var(--color-neutral1); margin-top:.5rem; }
+      .lv-dim { color:var(--color-neutral3); }
+      .lv-mcap.lv-dim { font-size:28px; }
+      .lv-tags { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.7rem; }
+      .lv-tag { font-size:11.5px; padding:.2rem .5rem; border-radius:6px; background:var(--color-surface3);
+                color:var(--color-neutral2); }
+      .lv-tag-b { background:var(--color-brand-tint); color:var(--color-brand); }
+      .lv-tag-q { cursor:help; }
+      .lv-bar { display:flex; gap:3px; height:5px; margin-top:.8rem; }
+      .lv-bar i { border-radius:99px; }
+      .lv-foot { display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+                 margin-top:.8rem; font-size:12px; }
+      .lv-ok { color:var(--color-neutral2); }
+      .lv-bad { color:var(--color-brand); }
+      .lv-empty { grid-column:1/-1; padding:3rem 0; text-align:center; font-size:15px; color:var(--color-neutral2); }
+    </style>
+    <script type="module" src="live-view.js?v=1"></script>
+  </head>
+  <body>
+<div id="root"><div class="min-h-dvh flex flex-col bg-surface1"><header class="sticky top-0 z-30 transition-colors duration-200 border-b border-transparent hl-bar"><div class="mx-auto max-w-[1120px] px-6 h-16 flex items-center gap-3"><a class="shrink-0" href="./" data-discover="true"><span><span class="inline-flex items-center gap-2"><img src="adha-logo.png" width="24" height="24" alt="Adha" style="display:block" /><span class="text-[17px] medium tracking-tight text-neutral1">adha</span></span></span></a><div class="flex-1"></div><nav class="hidden sm:flex items-center gap-7 mr-4"><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="hooks" data-discover="true">Adhas</a><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="launch" data-discover="true">Launch</a><a aria-current="page" class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral1 medium" href="live" data-discover="true">Live</a><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="launches" data-discover="true">My launches</a><a class="h-8 px-1 text-[15px] transition-colors flex items-center text-neutral2 hover:text-neutral1" href="docs" data-discover="true">Docs</a></nav><button class="inline-flex items-center justify-center medium whitespace-nowrap rounded-full transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 cursor-pointer select-none bg-neutral1 text-white hover:bg-neutral1/88 h-8 px-3.5 text-[13px] gap-1.5">Connect wallet</button><button class="sm:hidden h-8 w-8 rounded-[10px] hover:bg-surface2 flex items-center justify-center text-neutral2 cursor-pointer" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5h12M2 8h12M2 11.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg></button></div></header><main class="flex-1"><div data-live class="mx-auto max-w-[1120px] px-6 pb-24">
+  <div class="lv-head">
+    <h1 class="lv-h1"><span class="lv-dot"></span>Live</h1>
+    <p class="lv-sub">Every coin launched through Adha, with the split it carries and whether that split
+      is actually on chain. Market caps and holder counts come from pump.fun; the split status is read
+      from the coin's own sharing config, so a coin whose split never landed says so here.</p>
+    <div class="lv-chips" data-chips>
+      <button data-f="all" class="on">All</button>
+      <button data-f="burn">Buy &amp; burn</button>
+      <button data-f="holders">Holder rewards</button>
+      <button data-f="buyback">Buy back</button>
+      <button data-f="jackpot">Jackpot</button>
+      <button data-f="reserve">Reserve</button>
+      <button data-f="creator">Creator</button>
+      <button data-f="custom">Custom</button>
+      <span class="lv-count" data-count>loading…</span>
+    </div>
+  </div>
+  <div class="lv-grid" data-grid>
+    <p class="lv-empty">Reading the registry…</p>
+  </div>
+</div></main><footer class="rule"><div class="mx-auto max-w-[1120px] px-6 py-10 flex flex-col sm:flex-row gap-5 sm:items-center justify-between"><div class="flex items-center gap-2.5"><img src="adha-logo.png" width="17" height="17" alt="Adha" style="display:block" /><span class="text-[13.5px] text-neutral2">Adha routes creator fees. It never holds them. Every transaction is signed in your wallet.</span></div><div class="flex items-center gap-6 text-[13.5px] text-neutral2"><a class="hover:text-neutral1 transition-colors" href="hooks" data-discover="true">Adhas</a><a class="hover:text-neutral1 transition-colors" href="launch" data-discover="true">Launch</a><a class="hover:text-neutral1 transition-colors" href="live" data-discover="true">Live</a><a class="hover:text-neutral1 transition-colors" href="docs" data-discover="true">Docs</a><a href="https://pump.fun" target="_blank" rel="noreferrer" class="hover:text-neutral1 transition-colors">pump.fun</a><a href="https://x.com/adhadotfun" target="_blank" rel="noreferrer" class="hover:text-neutral1 transition-colors">X</a></div></div></footer></div></div>
+  
+
+
+  </body>
+</html>

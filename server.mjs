@@ -115,7 +115,7 @@ const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=u
 
 // Route -> captured page. Mirrors the original SPA's URL surface exactly.
 const ROUTES = { "/": "index.html", "/hooks": "hooks.html", "/hooks/custom": "hooks-custom.html",
-  "/launch": "launch.html", "/launches": "launches.html", "/docs": "docs.html" };
+  "/launch": "launch.html", "/launches": "launches.html", "/live": "live.html", "/docs": "docs.html" };
 
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const LEG_KINDS = new Set(["burn", "holders", "jackpot", "wallet", "creator", "top-holders", "reserve", "buyback"]);
