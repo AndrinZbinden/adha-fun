@@ -60,9 +60,11 @@ function card(x) {
           'href="https://pump.fun/coin/' + esc(x.mint) + '">\u2197</a>' +
       "</div>" +
     "</div>" +
-    '<a class="lv-sym" target="_blank" rel="noreferrer" href="https://pump.fun/coin/' + esc(x.mint) + '">$' +
-      esc(x.symbol || "") + "</a>" +
-    '<div class="lv-name">' + esc(x.name || "") + "</div>" +
+    '<a class="lv-sym" data-sym="' + esc(x.mint) + '" target="_blank" rel="noreferrer" ' +
+      'href="https://pump.fun/coin/' + esc(x.mint) + '">' +
+      (x.symbol ? "$" + esc(x.symbol) : esc(short(x.mint))) + "</a>" +
+    '<div class="lv-name" data-name="' + esc(x.mint) + '">' +
+      esc(x.name || "Launching today") + "</div>" +
     '<div data-mcap="' + esc(x.mint) + '" class="lv-mcap lv-dim">\u2014</div>' +
     '<div class="lv-tags">' +
       (x.mint === FEATURED ? '<span class="lv-tag lv-tag-f">Featured</span>' : "") +
@@ -88,8 +90,12 @@ function paintSplit(root, mint, h) {
   if (!h || h.status === "unknown") { el.textContent = "split status unavailable"; return; }
   if (h.status === "ok") {
     el.className = "lv-ok";
-    el.textContent = "\u2713 split live \u00b7 " + Math.round((h.executorBps || 0) / 100) + "% routed" +
-      (h.revoked ? " \u00b7 locked" : "");
+    // No sharing config is the correct state for a dev-keeps-everything coin:
+    // pump.fun pays the creator 100% by default, so there is nothing to route.
+    el.textContent = h.viaDefault
+      ? "\u2713 dev keeps 100% \u00b7 pump.fun default"
+      : "\u2713 split live \u00b7 " + Math.round((h.executorBps || 0) / 100) + "% routed" +
+        (h.revoked ? " \u00b7 locked" : "");
     return;
   }
   el.className = "lv-bad";
@@ -157,6 +163,9 @@ export async function initLive() {
       if (logo) logo.style.backgroundImage = url;
       if (art) art.style.backgroundImage = url;
     }
+    const sym = q("sym"), nm = q("name");
+    if (sym && m.symbol) sym.textContent = "$" + m.symbol;
+    if (nm && m.name) nm.textContent = m.name;
     const mc = q("mcap");
     if (mc && usd(m.mcapUsd)) { mc.textContent = usd(m.mcapUsd); mc.className = "lv-mcap"; }
     const hd = q("holders");

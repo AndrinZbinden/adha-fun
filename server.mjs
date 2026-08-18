@@ -261,7 +261,13 @@ async function splitHealth(mint) {
 
   let value;
   if (!info || !info.value) {
-    value = { status: "missing", executorBps: want.get(keeper.address) || 0 };
+    // A coin whose entire policy is "the dev keeps the fees" needs no sharing
+    // config: pump.fun already pays 100% to the creator when none exists. That
+    // is the policy working, not a broken split, so it is not reported as one.
+    const creatorOnly = want.size === 1 && want.has(row.creator);
+    value = creatorOnly
+      ? { status: "ok", viaDefault: true, executorBps: 0 }
+      : { status: "missing", executorBps: want.get(keeper.address) || 0 };
   } else {
     const { holders, revoked } = decodeSharingConfig(info.value.data[0]);
     const got = new Map(holders.map((h) => [h.address, h.bps]));
@@ -475,6 +481,32 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, removed });
   }
 
+  // Register a coin by hand, for the case the registry cannot prove yet: a
+  // launch that has not minted. No on-chain proof exists to check, so this is
+  // admin only, and the blank fields fill themselves in once the coin is live.
+  if (p === "/api/launches/seed" && req.method === "POST") {
+    const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "admin token required" });
+    const body = await readBody(req, 16 * 1024);
+    let b; try { b = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "invalid JSON" }); }
+    if (!B58.test(String(b.mint || ""))) return json(res, 400, { error: "invalid mint" });
+    const legErr = validateLegs(b.legs);
+    if (legErr) return json(res, 400, { error: legErr });
+    if (b.creator && !B58.test(String(b.creator))) return json(res, 400, { error: "invalid creator" });
+    db.prepare(`INSERT INTO launches
+      (mint,name,symbol,creator,hook_id,legs_json,cadence,sharing_config,authority_revoked,policy_sig,mint_sig,created_at)
+      VALUES (?,?,?,?,?,?,?,NULL,0,NULL,NULL,?)
+      ON CONFLICT(mint) DO UPDATE SET
+        hook_id   = excluded.hook_id,
+        legs_json = excluded.legs_json`).run(
+      String(b.mint), String(b.name || "").slice(0, 64), String(b.symbol || "").slice(0, 16),
+      String(b.creator || ""), String(b.hookId || "creator").slice(0, 40),
+      JSON.stringify(b.legs), String(b.cadence || "manual").slice(0, 20), Date.now());
+    healthCache.delete(String(b.mint));
+    marketCache.delete(String(b.mint));
+    return json(res, 201, { ok: true, launch: shape(db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint))) });
+  }
+
   // Live market data for the launches page: logo, market cap, holders.
   // Proxied through the server because pump.fun's API sends no CORS header,
   // and cached briefly so a page full of coins is not a burst of upstream hits.
@@ -573,7 +605,8 @@ async function holderCount(mint, exclude) {
 async function marketFor(mint) {
   const hit = marketCache.get(mint);
   if (hit && Date.now() - hit.at < MARKET_TTL) return hit.data;
-  let data = { image: null, mcapUsd: null, holders: null, complete: false };
+  let data = { image: null, mcapUsd: null, holders: null, complete: false,
+               name: null, symbol: null, creator: null, live: false };
   try {
     const c = await fetch("https://frontend-api-v3.pump.fun/coins/" + mint, {
       headers: { accept: "application/json", "user-agent": "Mozilla/5.0" },
@@ -581,6 +614,11 @@ async function marketFor(mint) {
     }).then((r) => (r.ok ? r.json() : null));
     if (c) {
       data.image = c.image_uri || null;
+      data.name = c.name || null;
+      data.symbol = c.symbol || null;
+      data.creator = c.creator || null;
+      data.live = true;
+      backfill(mint, c);
       data.mcapUsd = typeof c.usd_market_cap === "number" ? c.usd_market_cap : null;
       data.complete = !!c.complete;
       // The bonding curve holds the unsold supply and is not a holder.
@@ -589,6 +627,24 @@ async function marketFor(mint) {
   } catch {}
   marketCache.set(mint, { at: Date.now(), data });
   return data;
+}
+
+/* A coin can be registered before it exists on chain, so its name, symbol and
+   creator are blank until pump.fun has it. The first market read after the mint
+   lands fills them in, and never overwrites anything already recorded. */
+function backfill(mint, c) {
+  try {
+    const row = db.prepare("SELECT name, symbol, creator FROM launches WHERE mint=?").get(mint);
+    if (!row) return;
+    const name = row.name || String(c.name || "").slice(0, 64);
+    const symbol = row.symbol || String(c.symbol || "").slice(0, 16);
+    const creator = row.creator || (B58.test(String(c.creator || "")) ? String(c.creator) : "");
+    if (name === row.name && symbol === row.symbol && creator === row.creator) return;
+    db.prepare("UPDATE launches SET name=?, symbol=?, creator=? WHERE mint=?")
+      .run(name, symbol, creator, mint);
+    healthCache.delete(mint);
+    console.log(`[registry] filled in ${symbol || mint} from pump.fun`);
+  } catch {}
 }
 
 function shape(r) {
