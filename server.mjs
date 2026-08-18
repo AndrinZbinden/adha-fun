@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_mint ON runs(mint, created_at DESC);
 `);
 
+// Older databases predate the dev-token lock pointer.
+try { db.exec("ALTER TABLE launches ADD COLUMN lock_json TEXT"); } catch { /* already there */ }
+
 const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -523,8 +526,17 @@ async function handleApi(req, res, url) {
       String(b.mint), String(b.name || "").slice(0, 64), String(b.symbol || "").slice(0, 16),
       String(b.creator || ""), String(b.hookId || "creator").slice(0, 40),
       JSON.stringify(b.legs), String(b.cadence || "manual").slice(0, 20), Date.now());
+    if (b.lock === null) db.prepare("UPDATE launches SET lock_json=NULL WHERE mint=?").run(String(b.mint));
+    else if (b.lock && B58.test(String(b.lock.escrow || ""))) {
+      db.prepare("UPDATE launches SET lock_json=? WHERE mint=?").run(JSON.stringify({
+        escrow: String(b.lock.escrow),
+        sig: b.lock.sig ? String(b.lock.sig).slice(0, 100) : null,
+        program: String(b.lock.program || "Streamflow").slice(0, 40),
+      }), String(b.mint));
+    }
     healthCache.delete(String(b.mint));
     marketCache.delete(String(b.mint));
+    lockCache.delete(String(b.mint));
     return json(res, 201, { ok: true, launch: shape(db.prepare("SELECT * FROM launches WHERE mint=?").get(String(b.mint))) });
   }
 
@@ -552,8 +564,10 @@ async function handleApi(req, res, url) {
       .filter((m) => B58.test(m)).slice(0, 24);
     const out = {};
     await Promise.all(mints.map(async (m) => {
-      try { out[m] = await splitHealth(m); }
-      catch (e) { out[m] = { status: "unknown", error: String(e.message || e).slice(0, 80) }; }
+      try {
+        const [h, lock] = await Promise.all([splitHealth(m), lockStatus(m).catch(() => null)]);
+        out[m] = lock ? { ...h, lock } : h;
+      } catch (e) { out[m] = { status: "unknown", error: String(e.message || e).slice(0, 80) }; }
     }));
     return json(res, 200, { health: out });
   }
@@ -666,6 +680,48 @@ function backfill(mint, c) {
     healthCache.delete(mint);
     console.log(`[registry] filled in ${symbol || mint} from pump.fun`);
   } catch {}
+}
+
+/* ---- dev-token lock -------------------------------------------------------
+   A coin can say "the dev tokens are locked", and that claim is worth exactly
+   as much as the account it points at. So the registry stores only the escrow
+   address and the transaction that created it; how much is actually still in
+   there is read from the chain on every check. Withdraw the tokens and the
+   badge disappears by itself, without anyone editing anything here. */
+const lockCache = new Map();
+
+async function lockStatus(mint) {
+  const hit = lockCache.get(mint);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+
+  const row = db.prepare("SELECT lock_json FROM launches WHERE mint=?").get(mint);
+  if (!row || !row.lock_json) return null;
+  let meta; try { meta = JSON.parse(row.lock_json); } catch { return null; }
+  if (!meta || !B58.test(String(meta.escrow || ""))) return null;
+
+  let value = { status: "unknown", escrow: meta.escrow, sig: meta.sig || null,
+                program: meta.program || "Streamflow" };
+  try {
+    const call = (method, params) => fetch(RPC_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(8000),
+    }).then((r) => r.json());
+
+    const [bal, sup] = await Promise.all([
+      call("getTokenAccountBalance", [meta.escrow]),
+      call("getTokenSupply", [mint]),
+    ]);
+    const amt = Number(bal?.result?.value?.amount || 0);
+    const total = Number(sup?.result?.value?.amount || 0);
+    value = amt > 0 && total > 0
+      ? { ...value, status: "locked", uiAmount: amt / 10 ** (bal.result.value.decimals || 0),
+          pct: (amt / total) * 100 }
+      : { ...value, status: "released" };
+  } catch { /* leave it unknown rather than guess */ }
+
+  lockCache.set(mint, { at: Date.now(), value });
+  return value;
 }
 
 function shape(r) {

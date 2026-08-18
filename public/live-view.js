@@ -68,6 +68,7 @@ function card(x) {
     '<div data-mcap="' + esc(x.mint) + '" class="lv-mcap lv-dim">\u2014</div>' +
     '<div class="lv-tags">' +
       (x.mint === FEATURED ? '<span class="lv-tag lv-tag-f">Featured</span>' : "") +
+      '<span data-lock="' + esc(x.mint) + '"></span>' +
       '<span class="lv-tag lv-tag-b">' + esc(kind) + "</span>" +
       (custom ? '<span class="lv-tag">Custom</span>' : "") +
       '<span class="lv-tag lv-tag-q" title="' + esc(split) + '">' + legs.length +
@@ -100,6 +101,21 @@ function paintSplit(root, mint, h) {
   }
   el.className = "lv-bad";
   el.textContent = h.status === "wrong" ? "\u26a0 split does not match" : "\u26a0 no split on chain";
+}
+
+/* Only shown while the escrow still holds the tokens. The server re-reads that
+   account, so if the dev ever withdraws, this vanishes on the next check. */
+function paintLock(root, mint, lock) {
+  const el = root.querySelector('[data-lock="' + CSS.escape(mint) + '"]');
+  if (!el) return;
+  if (!lock || lock.status !== "locked") { el.innerHTML = ""; return; }
+  const pct = lock.pct >= 1 ? Math.round(lock.pct) : Number(lock.pct).toFixed(2);
+  const href = lock.sig ? "https://solscan.io/tx/" + encodeURIComponent(lock.sig)
+                        : "https://solscan.io/account/" + encodeURIComponent(lock.escrow);
+  el.innerHTML = '<a class="lv-tag lv-tag-l" target="_blank" rel="noreferrer" href="' + href +
+    '" title="' + esc(lock.uiAmount ? Math.round(lock.uiAmount).toLocaleString() + " tokens held in " +
+      (lock.program || "an") + " escrow \u2014 click to verify on Solscan" : "verify on Solscan") +
+    '">\ud83d\udd12 dev locked \u00b7 ' + pct + '%</a>';
 }
 
 async function getJson(u) {
@@ -179,6 +195,7 @@ export async function initLive() {
       hd.textContent = m.holders + (m.holders === 1 ? " holder" : " holders");
     }
     if (m.health) paintSplit(grid, mint, m.health);
+    paintLock(grid, mint, m.health && m.health.lock);
   }
 
   render();
@@ -203,6 +220,7 @@ export async function initLive() {
         for (const k of Object.keys(health || {})) {
           market[k] = { ...(market[k] || {}), health: health[k] };
           paintSplit(grid, k, health[k]);
+          paintLock(grid, k, health[k] && health[k].lock);
         }
       } catch {
         for (const k of g) paintSplit(grid, k, null);
