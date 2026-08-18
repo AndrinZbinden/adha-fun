@@ -443,6 +443,32 @@ async function handleApi(req, res, url) {
     return json(res, 201, { ok: true, mint: b.mint, launch: shape(row) });
   }
 
+  // Remove a coin from the registry, or clear it out entirely. The chain is
+  // untouched by this: a deleted coin keeps its split and its fees, it simply
+  // stops being listed here and stops being worked by the keeper, which reads
+  // its queue from this table. Admin only, for obvious reasons.
+  if (p === "/api/launches" && req.method === "DELETE") {
+    const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!ADMIN_TOKEN || auth !== ADMIN_TOKEN) return json(res, 401, { error: "admin token required" });
+    const mint = url.searchParams.get("mint");
+    const all = url.searchParams.get("all") === "1";
+    if (!mint && !all) return json(res, 400, { error: "pass mint=<pubkey> or all=1" });
+    if (mint && !B58.test(mint)) return json(res, 400, { error: "invalid mint" });
+    // The per-coin books go with it, otherwise a mint reused later would
+    // inherit a stale balance and be handed money it never earned.
+    const wipe = db.transaction((m) => {
+      const where = m ? " WHERE mint=?" : "";
+      const args = m ? [m] : [];
+      const n = db.prepare("DELETE FROM launches" + where).run(...args).changes;
+      db.prepare("DELETE FROM ledger" + where).run(...args);
+      db.prepare("DELETE FROM runs" + where).run(...args);
+      return n;
+    });
+    const removed = wipe(mint || null);
+    console.log(`[registry] removed ${removed} launch${removed === 1 ? "" : "es"}${mint ? " (" + mint + ")" : " (all)"}`);
+    return json(res, 200, { ok: true, removed });
+  }
+
   // Live market data for the launches page: logo, market cap, holders.
   // Proxied through the server because pump.fun's API sends no CORS header,
   // and cached briefly so a page full of coins is not a burst of upstream hits.

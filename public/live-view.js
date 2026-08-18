@@ -11,6 +11,10 @@ const LABELS = {
 };
 const PALETTE = ["#6f5bd6", "#120f19", "#c8b8ff", "#8d8ba3", "#e4dcff"];
 
+/* Pinned to the top of the grid regardless of market cap. Set to "" to let the
+   page sort purely on size again. */
+const FEATURED = "5zqHzNQMyX811qRvc5YJ4tP2N47NY7VbdMJBQqh3adha";
+
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const short = (m) => String(m || "").slice(0, 4) + "\u2026" + String(m || "").slice(-4);
@@ -61,6 +65,7 @@ function card(x) {
     '<div class="lv-name">' + esc(x.name || "") + "</div>" +
     '<div data-mcap="' + esc(x.mint) + '" class="lv-mcap lv-dim">\u2014</div>' +
     '<div class="lv-tags">' +
+      (x.mint === FEATURED ? '<span class="lv-tag lv-tag-f">Featured</span>' : "") +
       '<span class="lv-tag lv-tag-b">' + esc(kind) + "</span>" +
       (custom ? '<span class="lv-tag">Custom</span>' : "") +
       '<span class="lv-tag lv-tag-q" title="' + esc(split) + '">' + legs.length +
@@ -127,6 +132,9 @@ export async function initLive() {
       .filter((c) => filter === "all" ||
         (filter === "custom" ? c.hookId === "custom" : (c.legs || []).some((l) => l.kind === filter)))
       .sort((a, b) => {
+        // The featured coin leads the grid whatever its size.
+        if (a.mint === FEATURED) return -1;
+        if (b.mint === FEATURED) return 1;
         const ma = market[a.mint]?.mcapUsd || 0, mb = market[b.mint]?.mcapUsd || 0;
         return mb - ma || b.createdAt - a.createdAt;
       });
